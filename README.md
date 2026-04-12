@@ -12,6 +12,31 @@ Current state-of-the-art detectors like AASIST3 rely on KAN layers for feature t
 
 ---
 
+## Directory Layout
+
+```
+kon_artist/
+├── configs/                # YAML files for hyperparameters (RL, KAN grids, Audio)
+├── data/                   # Symlinks to ASVspoof datasets
+├── docs/                   # Papers & Reports
+├── notebooks/              # Prototyping and visualization of splines/audio
+├── scripts/                # Entry points for the CLI
+│   ├── train.py            # Main training loop
+│   └── evaluate.py         # Testing against different detectors
+├── src/                    # Core library
+│   ├── agents/             # RL logic (PPO, SAC, or custom Actor-Critic)
+│   ├── env/                # Gymnasium wrappers for AASIST3
+│   ├── models/             # Generator (Actor) architecture (KAN-based or MLPs)
+│   ├── synthesis/          # Audio manipulation (HiFi-GAN, DSP functions)
+│   └── utils/              # Audio processing, logging, and metrics (MOS, SDR)
+├── third_party/            # External repos (git submodule add ... AASIST3)
+├── tests/                  # Unit tests for audio alignment and reward logic
+├── requirements.txt
+└── setup.py                # For 'pip install -e .'
+```
+
+---
+
 ## Adversarial Architecture
 
 The system operates as a closed-loop optimization process where the detector's confidence score serves as the primary reward signal.
