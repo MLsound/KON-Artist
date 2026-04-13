@@ -2,3 +2,7 @@
 *.zip
 .DS_Store
 /data
+*.pyc
+/src/kon_artist.egg-info
+/third_party
+.env
