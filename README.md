@@ -10,6 +10,66 @@ Current state-of-the-art detectors like AASIST3 rely on KAN layers for feature t
 
 **KON-Artist** treats AASIST3 as a "frozen" critic within an RL environment. An agent (the Generator) learns to manipulate audio synthesis parameters to maximize the probability of being classified as "bonafide" (human) while maintaining minimum audio quality standards.
 
+### Repository Architecture and Logic Flow
+
+The repository follows a modular design where the **Gymnasium Environment** acts as the central hub, mediating between the RL Agent (PPO), the DSP transformations, and the frozen detector (AASIST3).
+
+```mermaid
+graph TD
+    subgraph Scripts
+        T[train.py]
+        L1[ ]
+        style L1 fill:none,stroke:none
+        E[evaluate.py]
+        G[generate_plots.py]
+    end
+
+    subgraph Core_Library [src/]
+        direction TB
+        LDR[data/loader.py]
+        ENV[env/audio_attack_env.py]
+        DSP[synthesis/dsp.py: AdvancedDSPPipeline]
+        MDL[models/aasist.py: AASISTWrapper]
+        AUD[utils/audio.py: preprocess_audio]
+        UTL[utils/callbacks.py]
+    end
+
+    subgraph External_Sources
+        TP[third_party/AASIST3]
+        HF[(HuggingFace: ASVspoof 2019)]
+    end
+
+    %% Training Data Flow (Pipeline)
+    HF -->|Streaming| LDR
+    LDR -->|Standardize| AUD
+    AUD -->|Initial State| LDR
+    LDR ==>|Batch/Stream| ENV
+    
+    %% Training Logic
+    T ==> ENV
+    ENV ==> DSP
+    ENV ==> MDL
+    T --> UTL
+    
+    %% Inference & Utilities
+    MDL -->|Normalize/Pre-emphasis| AUD
+    E --> MDL
+    
+    %% Data Persistence
+    UTL -.->|Saves CSV| CSV[(rewards_history.csv)]
+    G -.->|Reads| CSV
+    
+    %% Model Dependency
+    MDL -->|Imports repo| TP
+
+    %% Logic Description
+    ENV -.->|Reward & State| T
+    DSP -.->|Modified Audio| ENV
+    MDL -.->|Scores/Embeddings| ENV
+
+    %% Invisible links
+    TP ~~~ HF
+```
 ---
 
 ## Directory Layout
@@ -22,17 +82,21 @@ kon_artist/
 ├── notebooks/              # Prototyping and visualization of splines/audio
 ├── scripts/                # Entry points for the CLI
 │   ├── train.py            # Main training loop
+│   ├── generate_plots.py   # Generates convergence graph
 │   └── evaluate.py         # Testing against different detectors
 ├── src/                    # Core library
 │   ├── agents/             # RL logic (PPO, SAC, or custom Actor-Critic)
+│   ├── data/               # Data loader (AVSpoof 2019 LA)
 │   ├── env/                # Gymnasium wrappers for AASIST3
 │   ├── models/             # Generator (Actor) architecture (KAN-based or MLPs)
 │   ├── synthesis/          # Audio manipulation (HiFi-GAN, DSP functions)
 │   └── utils/              # Audio processing, logging, and metrics (MOS, SDR)
 ├── third_party/            # External repos (git submodule add ... AASIST3)
+│   └── AASIST3/            # AASIST3 repo (cloned)
 ├── tests/                  # Unit tests for audio alignment and reward logic
-├── requirements.txt
-└── setup.py                # For 'pip install -e .'
+├── requirements.txt        # Python dependencies
+├── pyproject.toml          # For 'pip install -e .'
+└── pytest.ini              # For 'pytest'
 ```
 
 ---
@@ -79,8 +143,11 @@ To ensure compatibility between the **KAN** layers and the **AASIST3** backbone,
 Execute the following block to clone the target detector and configure the environment:
 
 ```bash
+# Install the project source code
+pip install -e .
+
 # Clone target detector repository
-git clone https://github.com/mtuciru/AASIST3.git
+git clone https://github.com/mtuciru/AASIST3.git third_party/AASIST3
 
 # 1. Purge all potentially conflicting packages
 pip uninstall -y torch torchvision torchaudio torchcodec datasets
