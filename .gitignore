@@ -6,3 +6,5 @@
 /src/kon_artist.egg-info
 /third_party
 .env
+/wandb
+/weights
