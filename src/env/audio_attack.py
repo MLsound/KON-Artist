@@ -8,13 +8,14 @@ by a target AASIST3 detector.
 """
 import gymnasium as gym
 import numpy as np
+import itertools
 from src.synthesis.dsp import DSPPipeline
 from src.utils.logger import get_logger
 import logging
 
 logger = get_logger(name=__file__,
                     log_file="outputs/train_session.log",
-                    level=logging.DEBUG)  # Set to DEBUG for detailed trace during environment interactions
+                    level=logging.INFO)  # Set to DEBUG for detailed trace during environment interactions
 
 class AudioAttackEnv(gym.Env):
     """
@@ -23,10 +24,12 @@ class AudioAttackEnv(gym.Env):
     def __init__(self, detector, dsp_config: dict, audio_files: list):
         super().__init__()
         self.detector = detector
-        self.audio_files = audio_files
-        self.dsp_config = dsp_config
+        
+        # self.audio_files = audio_files
+        self.audio_files = itertools.cycle(audio_files) # Create an infinite iterator from the audio stream generator
         
         # Instantiate the DSP pipeline as a persistent object
+        self.dsp_config = dsp_config
         self.dsp = DSPPipeline(sample_rate=16000)
         
         # 7-dimensional action space (Jitter, Shimmer, Tilt, etc.)
@@ -68,6 +71,11 @@ class AudioAttackEnv(gym.Env):
         """
         Executes one attack step.
         """
+        # Initialize flags for episode termination and truncation
+        terminated = False
+        truncated = False
+
+        # Increment the internal step counter for episode management
         self.current_step += 1
         
         # 1. Apply DSP transformations
@@ -80,24 +88,31 @@ class AudioAttackEnv(gym.Env):
         logger.debug(f"Processed audio shape: {processed_audio.shape}") # Debugging statement to trace audio processing
         
         # 2. Evaluation by AASIST3
+        # Capture both score and embedding for reward and observation
         score, embedding = self.detector.get_score_and_embedding(processed_audio)
         logger.debug(f"Embedding shape: {embedding.shape}") # Debugging statement to trace embedding extraction
         logger.debug(f"AASIST3 score: {score}") # Debugging statement to trace model output
         obs = self._get_obs(embedding) # Observation: The embedding from AASIST3 (160-dim)
 
-        # 3. Reward: Probability of appearing 'Bonafide'
-        # Cast to standard Python float just to be safe
-        # reward = float(score) 
-        # logger.debug(f"Reward calculated: {reward}") # Debugging statement to trace reward calculation
-        
-        # 3. Reward: Log-probability of appearing 'Bonafide'
+        # REWARD FUNCTION
+        # Reward: Log-probability of appearing 'Bonafide'
         # R = log(P + epsilon) magnifies gradients for low-probability states
         epsilon = 1e-9
+        vertical_shift = 25.0 # Shift to keep rewards positive for PPO stability
         reward = float(np.log(score + epsilon))
         logger.debug(f"Raw Score: {float(score)} | Log Reward: {reward}")
         # Optional: Normalize it to a slightly positive/bounded scale for PPO
-        reward += 25.0 # e.g., shift it so the minimum expected log (-20) becomes 0
+        reward += vertical_shift # shift it so the minimum expected log (-25) becomes 0
+        logger.debug(f"Shifted Log Reward: {reward}") # Debugging statement to trace shifted reward calculation
 
+        # SUCCESS BONUS
+        # Double the reward if we bypass the model (>0.5)
+        # This creates a massive 'gravity' pull toward the bonafide class.
+        if score > 0.5:
+            bonus = 50.0 # Large bonus to create a strong incentive for successful attacks
+            reward += bonus
+            logger.info(f"--- ATTACK SUCCESSFUL: Score {score:.4f} ---")
+            logger.debug(f"Reward after success bonus: {reward}") # Debugging statement to trace reward after success bonus
         # Use the internal counter for verbosity
         logger.info(f"Step {self.current_step} | DSP Params: {self.last_dsp_params} | Reward: {float(score)}")
         
