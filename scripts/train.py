@@ -29,10 +29,10 @@ logger = get_logger(name=__file__,
 
 # TRAIN SETTINGS
 # Colab 5h limit: 70,560 to 88,200 steps max (17~21 iterations for 4096 n_steps)
-TOTAL_UPDATES = 5  # Total number of PPO updates (each update processes N_STEPS)
-N_STEPS = 2048  # PPO's default rollout buffer size; adjust if using a custom buffer implementation
-EPOCHS = 10  # Number of epochs per PPO update (default is 4 in stable-baselines3)
-BATCH = 512 # Batch size for PPO updates (default is 64 in stable-baselines3, but can be adjusted based on memory constraints)
+TOTAL_UPDATES = 20  # Total number of PPO updates (each update processes N_STEPS)
+N_STEPS = 4096  # 2048 is PPO's default rollout buffer size; adjust if using a custom buffer implementation
+EPOCHS = 15  # Number of epochs per PPO update (default is 4 in stable-baselines3)
+BATCH = 1e5 # Batch size for PPO updates (default is 64 in stable-baselines3, but can be adjusted based on memory constraints)
 
 TOTAL_TIMESTEPS = N_STEPS * TOTAL_UPDATES  # Total timesteps is the product of steps per update and total updates
 TOTAL_PASSES = TOTAL_UPDATES * EPOCHS  # Total passes through the data (for logging purposes)
@@ -105,7 +105,9 @@ def train():
         logger.info("Training finished. Data saved in outputs/rewards_history.csv")
         logger.info("Saving model.")
         model.save("outputs/kon_artist_agent")
-        
+
+    # except Exception as e:
+    #     logger.error(f"Training failed: {e}")
     except Exception:
         # Automatically captures and logs the full traceback
         logger.exception("Training failed with a critical error:")
