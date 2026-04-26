@@ -27,8 +27,8 @@ graph TD
     subgraph Core_Library [src/]
         direction TB
         LDR[data/loader.py]
-        ENV[env/audio_attack_env.py]
-        DSP[synthesis/dsp.py: AdvancedDSPPipeline]
+        ENV[env/audio_attack.py]
+        DSP[synthesis/dsp.py: DSPPipeline]
         MDL[models/aasist.py: AASISTWrapper]
         AUD[utils/audio.py: preprocess_audio]
         UTL[utils/callbacks.py]
@@ -52,7 +52,6 @@ graph TD
     T --> UTL
     
     %% Inference & Utilities
-    MDL -->|Normalize/Pre-emphasis| AUD
     E --> MDL
     
     %% Data Persistence
@@ -76,29 +75,31 @@ graph TD
 
 ```
 kon_artist/
-├── configs/                # YAML files for hyperparameters (RL, KAN grids, Audio)
+├── configs/                # YAML files for hyperparameters (RL, Audio)
 ├── data/                   # Symlinks to ASVspoof datasets
 ├── docs/                   # Papers & Reports
 ├── notebooks/              # Prototyping and visualization of splines/audio
 ├── scripts/                # Entry points for the CLI
 │   ├── train.py            # Main training loop
 │   ├── generate_plots.py   # Generates convergence graph
-│   └── evaluate.py         # Testing against different detectors
+│   └── evaluate.py         # EER/Inference Metrics
 ├── src/                    # Core library
-│   ├── agents/             # RL logic (PPO, SAC, or custom Actor-Critic)
-│   ├── data/               # Data loader (AVSpoof 2019 LA)
-│   ├── env/                # Gymnasium wrappers for AASIST3
-│   ├── models/             # Generator (Actor) architecture (KAN-based or MLPs)
-│   ├── synthesis/          # Audio manipulation (HiFi-GAN, DSP functions)
+│   ├── data/loader.py      # Data loader (AVSpoof 2019 LA)
+│   ├── env/audio_attack.py # Gymnasium wrappers for AASIST3 (Infinite Loop)
+│   ├── models/aasist.py    # Generator (Actor) architecture (KAN-based or MLPs)
+│   ├── synthesis/dsp.py    # Audio manipulation (HiFi-GAN, DSP functions)
 │   └── utils/              # Audio processing, logging, and metrics (MOS, SDR)
-├── third_party/            # External repos (git submodule add ... AASIST3)
-│   └── AASIST3/            # AASIST3 repo (cloned)
+│       ├── audio.py        # Audio Preprocessing
+│       ├── callbacks.py    # Reward Logging & W&B Integration
+│       ├── metrics.py      # EER Calculations
+│       └── logger.py       # Standardized Log-file Management
+├── third_party/AASIST3/    # Target Model AASIST3 Repository (cloned)
 ├── tests/                  # Unit tests for audio alignment and reward logic
-├── requirements.txt        # Python dependencies
+├── environment.yml         # Python dependencies
 ├── pyproject.toml          # For 'pip install -e .'
-└── pytest.ini              # For 'pytest'
+├── pytest.ini              # For 'pytest'
+└── root.py                 # For folder
 ```
-
 ---
 
 ## Adversarial Architecture
@@ -111,7 +112,7 @@ The actor is a policy network that controls a non-differentiable or black-box au
 * Jitter and shimmer levels.
 * Latent embeddings in a pre-trained Vocoder (e.g., HiFi-GAN).
 
-### 2. The Environment (AASIST3 Wrapper)
+### 2. The Critic (AASIST3 Wrapper)
 The environment takes the generated raw `.wav` file, ensures it meets the 16kHz mono requirement, and passes it through the target AASIST3 model.
 
 ---
@@ -140,26 +141,42 @@ To ensure compatibility between the **KAN** layers and the **AASIST3** backbone,
 
 ### Environment Setup
 
-Execute the following block to clone the target detector and configure the environment:
+To ensure compatibility between the **KAN** layers and the **AASIST3** backbone, follow these steps to configure your local environment:
 
 ```bash
-# Install the project source code
-pip install -e .
+# Create the Conda environment
+conda env create -f environment.yml
+
+# Activate the environment
+conda activate kon-env
 
 # Clone target detector repository
 git clone https://github.com/mtuciru/AASIST3.git third_party/AASIST3
-
-# 1. Purge all potentially conflicting packages
-pip uninstall -y torch torchvision torchaudio torchcodec datasets
-
-# 2. Install the strictly aligned PyTorch ecosystem (CUDA 12.1)
-pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121
-
-# 3. Install remaining dependencies, pinning datasets to the stable 2.x branch
-pip install transformers accelerate datasets==2.19.1 soundfile
 ```
 
 > **Note:** The specific pinning of `datasets==2.19.1` is critical to maintain compatibility with the data loading scripts used in the ASVspoof 2024 pipeline.
+
+## Execution
+
+The project is structured as a Python package. Always run scripts from the project root using the module flag (`-m`) to ensure internal paths and the data ingestion system are resolved correctly.
+
+### 1. Training the Agent
+Execute the main training orchestrator to begin the PPO optimization loop. This logs rewards to `outputs/rewards_history.csv` and tracks DSP evolution via Weights & Biases.
+```bash
+python -m scripts.train
+```
+
+### 2. Performance Evaluation
+Run the evaluation script to test the AASIST3 detector performance (EER) against specific datasets or to assess the success rate of the KON-Artist agent.
+```bash
+python -m scripts.evaluate
+```
+
+### 3. Generate Visualizations
+Once training data is available, generate convergence plots and reward history graphs for reports.
+```bash
+python -m scripts.generate_plots
+```
 
 -----
 
@@ -175,6 +192,12 @@ The theoretical foundation of **KON-Artist** is built upon the following researc
 
 ### Repository & Weights
 
-  * **Hugging Face Model Hub:** [MTUCI/AASIST3](https://huggingface.co/MTUCI/AASIST3)
-  * **Official Implementation:** [mtuciru/AASIST3](https://www.google.com/search?q=https://github.com/mtuciru/AASIST3)
+  * **Official Implementation:** [mtuciru/AASIST3](https://github.com/lab260ru/AASIST3)
+  * **Hugging Face Model Weights:** [MTUCI/AASIST3](https://huggingface.co/MTUCI/AASIST3)
+  * **Dataset AVSpoof 2019 LA:** [Bisher/ASVspoof_2019_LA](https://huggingface.co/datasets/Bisher/ASVspoof_2019_LA)
 
+---
+
+## Author
+
+**Alejandro Lloveras** - *Lead Researcher & Developer* - [GitHub Profile](https://github.com/MLsound/)
