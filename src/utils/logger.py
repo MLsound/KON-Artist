@@ -1,18 +1,20 @@
 import logging
 import sys
 from pathlib import Path
+from src.utils.misc import build_logger_name
 
-def get_logger(name: str, log_file: str = None, level: int = logging.INFO) -> logging.Logger:
+def get_logger(name: str, log_file: str = None, level: int = logging.DEBUG) -> logging.Logger:
     """
     Configures and returns a logger instance.
     
     Args:
         name: The name of the logger (usually __name__).
         log_file: Optional path to a file where logs will be saved.
-        level: Logging level (e.g., logging.DEBUG, logging.INFO).
+        level: Logging level (e.g., logging.DEBUG, logging.DEBUG).
     """
-    logger = logging.getLogger(name)
-    
+
+    logger = logging.getLogger(build_logger_name(name))
+
     # Prevents adding multiple handlers to the same logger if the 
     # function is called multiple times in the same session.
     if not logger.handlers:

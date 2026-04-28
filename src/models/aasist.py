@@ -17,7 +17,7 @@ import logging
 
 logger = get_logger(name=__file__,
                     log_file="outputs/train_session.log",
-                    level=logging.DEBUG)
+                    level=logging.INFO)
 
 class AASISTWrapper:
     """

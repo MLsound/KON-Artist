@@ -15,7 +15,7 @@ import logging
 
 logger = get_logger(name=__file__,
                     log_file="outputs/train_session.log",
-                    level=logging.DEBUG)
+                    level=logging.INFO)
 
 class RewardLoggerCallback(BaseCallback):
     """
@@ -52,8 +52,12 @@ class RewardLoggerCallback(BaseCallback):
                     writer = csv.writer(f)
                     writer.writerow([self.num_timesteps, last_reward])
                 
+                i = self.num_timesteps
                 if self.verbose > 0:
-                    logger.debug(f"Step {self.num_timesteps}: Reward saved: {last_reward}")
+                    if i % 10 == 0:
+                        logger.info(f"Step {i}: Reward saved: {last_reward}")
+                elif self.verbose > 1:
+                    logger.debug(f"Step {i}: Reward saved: {last_reward}")
         return True
 
 
