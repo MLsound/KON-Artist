@@ -87,25 +87,39 @@ class AASISTWrapper:
     def get_score_and_embedding(self, waveform: torch.Tensor):
         """
         Performs inference. Returns the Bonafide probability score and the embedding.
+        Supports both single waveforms [1, L] or [1, 1, L] and batches [B, 1, L].
         """
+        # 0. Safety reset for embeddings to prevent stale data leakage
+        self._embedding = None
+        
         with torch.no_grad():
-            output = self.model(waveform.to(self.device))
+            # 1. Prepare input: Ensure [B, 1, L]
+            if waveform.dim() == 2:
+                waveform = waveform.unsqueeze(0)
+            elif waveform.dim() == 1:
+                waveform = waveform.unsqueeze(0).unsqueeze(0)
+                
+            waveform = waveform.to(self.device)
             
-            # 1. Standard model output is logits. Embedding is captured strictly via the pre-hook.
+            # 2. Forward pass
+            output = self.model(waveform)
+            
+            # 3. Handle model output
+            # Standard model output is logits. Embedding is captured via the pre-hook.
             logits = output[0] if isinstance(output, tuple) else output
             
             if self._embedding is None:
                 raise RuntimeError("Embedding hook failed to fire. State representation is missing.")
             
-            # Captured embedding from the hook
+            # Captured embedding from the hook (already flattened to [B, D])
             embedding = self._embedding
 
-            # 2. Convert logits to Bonafide probability
+            # 4. Convert logits to Bonafide probability
             # AASIST3 typically outputs [Spoof, Bonafide]
             probabilities = F.softmax(logits, dim=1)
             
-            # Extract the probability for the Bonafide class (index 1)
-            # Use .item() to convert the 1D tensor to a standard Python float
-            score = probabilities[0, 1].item()
+            # Extract the probability for the Bonafide class (index 1) for all samples in batch
+            # Returns a 1D numpy array of scores
+            scores = probabilities[:, 1].cpu().numpy()
                 
-            return score, embedding
+            return scores, embedding
