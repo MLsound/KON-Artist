@@ -8,16 +8,18 @@ This script manages the end-to-end Reinforcement Learning pipeline:
 4. Executes training with custom callbacks for local CSV logging and W&B tracking.
 5. Saves the resulting agent for evaluation.
 """
-
+import os
+import logging
+import warnings
 from stable_baselines3 import PPO
-from src.data.loader import get_asvspoof_loader, generator_from_ds
+from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
+from stable_baselines3.common.monitor import Monitor
 from src.models.aasist import AASISTWrapper
 from src.env.audio_attack import AudioAttackEnv
+from src.env.wrappers import VecDetectorWrapper
 from src.utils.callbacks import RewardLoggerCallback, WandbAudioCallback
 from src.utils.logger import get_logger
 from src.utils.misc import create_timestamp
-import logging
-import warnings
 
 # Suppress the specific FutureWarning from huggingface_hub
 warnings.filterwarnings("ignore", category=FutureWarning, module="huggingface_hub")
@@ -32,12 +34,36 @@ logger = get_logger(name=__file__,
 TOTAL_UPDATES = 20  # Total number of PPO updates (each update processes N_STEPS)
 N_STEPS = 4096  # 2048 is PPO's default rollout buffer size; adjust if using a custom buffer implementation
 EPOCHS = 15  # Number of epochs per PPO update (default is 4 in stable-baselines3)
-BATCH = 1e5 # Batch size for PPO updates (default is 64 in stable-baselines3, but can be adjusted based on memory constraints)
+BATCH = 256 # Batch size for PPO updates (default is 64 in stable-baselines3, but can be adjusted based on memory constraints)a
+# Automatically scale workers based on CPU cores (All cores - 1 to leave room for the main process)
+N_ENVS = max(1, os.cpu_count() - 1)  # Number of parallel environments (CPU workers)
 
-TOTAL_TIMESTEPS = N_STEPS * TOTAL_UPDATES  # Total timesteps is the product of steps per update and total updates
+# PPO SCALING RULE: 
+# Increasing N_ENVS increases sample diversity per gradient update, which usually allows for more stable learning
+# but requires recalculating total timesteps to keep benchmarking comparable.
+TOTAL_ROLLOUT_BUFFER = N_STEPS * N_ENVS  # Total samples collected per PPO update
+TOTAL_TIMESTEPS = TOTAL_ROLLOUT_BUFFER * TOTAL_UPDATES  # Total timesteps for training
 TOTAL_PASSES = TOTAL_UPDATES * EPOCHS  # Total passes through the data (for logging purposes)
-BATCH = min(BATCH, N_STEPS)  # Ensure batch size does not exceed the number of steps in the buffer
-# logger.debug(f"batch used: {BATCH}") # Log the actual batch size being used after adjustment
+BATCH = min(BATCH, N_STEPS * N_ENVS) # Ensure batch size does not exceed the number of steps in the buffer
+# Log the actual batch size being used after adjustment
+logger.info(f"PPO Configuration: RolloutBuffer={TOTAL_ROLLOUT_BUFFER}, MiniBatch={BATCH_SIZE}, TotalSteps={TOTAL_TIMESTEPS}")
+
+def make_env(rank: int, seed: int = 42):
+    """
+    Utility function for multiprocessed env.
+    """
+    def _init():
+        # Lazy initialization via audio_config for pickling compatibility
+        audio_config = {
+            "split": "train",
+            "seed": seed + rank,
+            "buffer_size": 1000
+        }
+        # Worker has NO detector (it's in the VecDetectorWrapper on the main process)
+        env = AudioAttackEnv(detector=None, audio_config=audio_config)
+        # Monitor is required for RewardLoggerCallback to access ep_info_buffer
+        return Monitor(env)
+    return _init
 
 def train():
     """
@@ -46,64 +72,58 @@ def train():
     try:
         logger.info("===== Starting KON-Artist Training Session =====")
         
-        # 1. Initialize the detector wrapper and environment
-        logger.info("Loading AASIST3 model and initializing environment.")
-        detector = AASISTWrapper("MTUCI/AASIST3")
+        # 1. Initialize the detector wrapper (Centralized for batched GPU inference)
+        logger.info("Loading AASIST3 model for batched inference.")
+        detector = AASISTWrapper("MTUCI/AASIST3", device="cuda")
         
-        # 2. Initialize streaming dataset for the environment
-        logger.info("Initializing audio stream from ASVspoof 2019 dataset.")
-        ds = get_asvspoof_loader(split="train")
-        audio_stream = generator_from_ds(ds)
+        # 2. Initialize Vectorized Environments
+        logger.info(f"Instantiating {N_ENVS} parallel environments.")
+        if N_ENVS > 1:
+            # SubprocVecEnv runs environments in separate CPU processes
+            env = SubprocVecEnv([make_env(i) for i in range(N_ENVS)])
+        else:
+            # Fallback to DummyVecEnv for single environment debugging
+            env = DummyVecEnv([make_env(0)])
 
-        # 3. Create the Gymnasium environment with the streaming dataset
-        logger.info("Creating AudioAttackEnv with the loaded model.")
-        env = AudioAttackEnv(
-            detector=detector, 
-            dsp_config={}, 
-            audio_files=audio_stream # Pass the actual generator
-        )
+        # 3. Wrap for Batched GPU Inference
+        # This wrapper captures raw audio from workers and runs AASIST3 in batches
+        logger.info("Wrapping environment with VecDetectorWrapper for GPU batching.")
+        env = VecDetectorWrapper(env, detector)
 
-        # 4. Agent and Callback Instantiation
+        # 4. Agent Instantiation
         logger.info("Configuring PPO agent.")
-        # MlpPolicy is used to process the 160-dim embeddings
-        # model = PPO("MlpPolicy", env, verbose=2)
-        model = PPO(policy="MlpPolicy",
-                    env=env,
-                    n_steps=N_STEPS,
-                    batch_size=BATCH,
-                    n_epochs=EPOCHS,
-                    verbose=2) # Set to 2 for maximum verbosity during training
-        # verbosity:
-        #   0: No output (silent).
-        #   1: Basic information messages (such as the device used or wrappers applied) and training statistics.
-        #   2: Maximum verbosity, which includes detailed debug messages to monitor the internal behavior of the algorithm.
+        model = PPO(
+            policy="MlpPolicy",
+            env=env,
+            n_steps=N_STEPS,
+            batch_size=BATCH,
+            n_epochs=EPOCHS,
+            verbose=1,
+            tensorboard_log="outputs/tensorboard/"
+        )
         
-        # 5. Callbacks for logging rewards and audio samples
-        logger.info("Setting up callbacks.")
+        # 5. Callbacks
         timestamp = create_timestamp()
-        metadata={
-                    "architecture": "AASIST3",
-                    "dataset": "ASVspoof 2019",
-                    "timestamp": timestamp,
-                    "epochs": EPOCHS,
-                    "batch": BATCH,
-                    "n_steps": N_STEPS,
-                    "total_timesteps": TOTAL_TIMESTEPS,
-                    "total_passes": TOTAL_PASSES
-                }
-        reward_callback = RewardLoggerCallback(check_freq=1, id=timestamp, log_dir="outputs/") # Logs rewards at every step to a timestamped CSV file in outputs/history/
-        wandb_callback = WandbAudioCallback(config=metadata) # Weights & Biases callback to track DSP parameters and audio samples during training
+        metadata = {
+            "n_envs": N_ENVS,
+            "architecture": "AASIST3",
+            "timestamp": timestamp,
+            "epochs": EPOCHS,
+            "BATCH": BATCH,
+            "n_steps": N_STEPS,
+            "total_timesteps": TOTAL_TIMESTEPS
+        }
+        reward_callback = RewardLoggerCallback(check_freq=1, id=timestamp, log_dir="outputs/")
+        wandb_callback = WandbAudioCallback(config=metadata)
         
         # 6. Training Execution
-        logger.info("Beginning training.")
-        logger.info(f"Training configuration: N_STEPS={N_STEPS}, EPOCHS={EPOCHS}, BATCH={BATCH}, TOTAL_UPDATES={TOTAL_UPDATES}, TOTAL_TIMESTEPS={TOTAL_TIMESTEPS}")
+        logger.info(f"Beginning training: TOTAL_TIMESTEPS={TOTAL_TIMESTEPS}, BATCH_TOTAL={N_STEPS * N_ENVS}")
         model.learn(
-            total_timesteps=TOTAL_TIMESTEPS, # Set to 2048 for a single PPO update cycle (one full buffer)
+            total_timesteps=TOTAL_TIMESTEPS,
             callback=[reward_callback, wandb_callback]
         )
         
-        logger.info("Training finished. Data saved in outputs/rewards_history.csv")
-        logger.info("Saving model.")
+        logger.info("Training finished. Saving model.")
         model.save("outputs/kon_artist_agent")
 
     # except Exception as e:
