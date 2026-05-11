@@ -9,6 +9,8 @@ by a target AASIST3 detector.
 import gymnasium as gym
 import numpy as np
 import itertools
+import torch
+from src.env.reward_logic import compute_attack_reward
 from src.synthesis.dsp import DSPPipeline
 from src.utils.logger import get_logger
 import logging
@@ -20,23 +22,32 @@ logger = get_logger(name=__file__,
 class AudioAttackEnv(gym.Env):
     """
     RL Environment for optimizing audio spoofing parameters.
+    Supports both direct inference and vectorized batch inference modes.
     """
-    def __init__(self, detector, dsp_config: dict, audio_files: list):
+    def __init__(self, detector=None, dsp_config: dict = None, audio_config: dict = None, audio_files=None):
         super().__init__()
         self.detector = detector
+        self.audio_config = audio_config
         
-        # self.audio_files = audio_files
-        self.audio_files = itertools.cycle(audio_files) # Create an infinite iterator from the audio stream generator
+        # Initialize audio_files iterator
+        if audio_files is not None:
+            self.audio_files = itertools.cycle(audio_files) # Create an infinite iterator from the audio stream generator
+        else:
+            self.audio_files = None # Will be lazily initialized in reset() if audio_config is provided
         
         # Instantiate the DSP pipeline as a persistent object
-        self.dsp_config = dsp_config
+        self.dsp_config = dsp_config or {}
         self.dsp = DSPPipeline(sample_rate=16000)
         
         # 7-dimensional action space (Jitter, Shimmer, Tilt, etc.)
         self.action_space = gym.spaces.Box(low=-1, high=1, shape=(7,), dtype=np.float32)
         
-        # Observation: 160-layer AASIST3 embedding
-        self.observation_space = gym.spaces.Box(low=-1e5, high=1e5, shape=(160,), dtype=np.float32)
+        # Observation space: 160-dim embedding (if detector present) or 64600-dim raw audio
+        if self.detector:
+            self.observation_space = gym.spaces.Box(low=-1e5, high=1e5, shape=(160,), dtype=np.float32)
+        else:
+            # Fixed AASIST3 length: 64600 samples
+            self.observation_space = gym.spaces.Box(low=-1e5, high=1e5, shape=(64600,), dtype=np.float32)
         
         self.current_audio = None
         self.last_dsp_params = None
@@ -65,7 +76,9 @@ class AudioAttackEnv(gym.Env):
     def _get_obs(self, embedding):
         """Ensures observations are 1D float32 arrays for PPO buffer compatibility."""
         # Flatten (1, 160) -> (160,) and ensure float32
-        return embedding.cpu().numpy().flatten().astype(np.float32)
+        if isinstance(embedding, torch.Tensor):
+            return embedding.cpu().numpy().flatten().astype(np.float32)
+        return embedding.flatten().astype(np.float32)
 
     def step(self, action: np.ndarray):
         """
@@ -83,47 +96,29 @@ class AudioAttackEnv(gym.Env):
         self.last_dsp_params = self._denormalize(action)
         logger.debug(f"Denormalized DSP parameters: {self.last_dsp_params}") # Debugging statement to trace DSP parameters
 
-        # Call the class instance instead of the old function
+        # Process the current audio with the DSP pipeline using the denormalized parameters
         processed_audio = self.dsp(self.current_audio, self.last_dsp_params)
         logger.debug(f"Processed audio shape: {processed_audio.shape}") # Debugging statement to trace audio processing
         
+        # If no detector is provided, return raw audio for batch inference in a wrapper
+        if self.detector is None:
+            obs = self._get_obs(processed_audio)
+            # Return dummy values for reward and termination; to be filled by VecEnvWrapper
+            return obs, 0.0, False, False, {'processed_audio': processed_audio, 'dsp_params': self.last_dsp_params}
+
         # 2. Evaluation by AASIST3
         # Capture both score and embedding for reward and observation
-        score, embedding = self.detector.get_score_and_embedding(processed_audio)
+        scores, embeddings = self.detector.get_score_and_embedding(processed_audio)
+        score, embedding = scores[0], embeddings[0] # Assuming batch size of 1 for direct inference mode
         logger.debug(f"Embedding shape: {embedding.shape}") # Debugging statement to trace embedding extraction
         logger.debug(f"AASIST3 score: {score}") # Debugging statement to trace model output
         obs = self._get_obs(embedding) # Observation: The embedding from AASIST3 (160-dim)
-
-        # REWARD FUNCTION
-        # Reward: Log-probability of appearing 'Bonafide'
-        # R = log(P + epsilon) magnifies gradients for low-probability states
-        epsilon = 1e-9
-        vertical_shift = 25.0 # Shift to keep rewards positive for PPO stability
-        reward = float(np.log(score + epsilon))
-        logger.debug(f"Raw Score: {float(score)} | Log Reward: {reward}")
-        # Optional: Normalize it to a slightly positive/bounded scale for PPO
-        reward += vertical_shift # shift it so the minimum expected log (-25) becomes 0
-        logger.debug(f"Shifted Log Reward: {reward}") # Debugging statement to trace shifted reward calculation
-
-        # SUCCESS BONUS
-        # Double the reward if we bypass the model (>0.5)
-        # This creates a massive 'gravity' pull toward the bonafide class.
-        if score > 0.5:
-            bonus = 50.0 # Large bonus to create a strong incentive for successful attacks
-            reward += bonus
-            logger.info(f"--- ATTACK SUCCESSFUL: Score {score:.4f} ---")
-            logger.debug(f"Reward after success bonus: {reward}") # Debugging statement to trace reward after success bonus
-        # Use the internal counter for verbosity
-        logger.info(f"Step {self.current_step} | DSP Params: {self.last_dsp_params} | Reward: {float(score)}")
+                
+        # 3. Compute reward and check for termination
+        reward, terminated = compute_attack_reward(score, self) # Centralized call ensures logic parity with non-vectorized env
+        truncated = bool(self.current_step >= self.step_limit) # Logic for step limit (Environment-enforced limit)
         
-        # COMPLETION CRITERIA
-        # If the score exceeds a certain threshold, we can consider the episode successful
-        # Logic for completion (Agent successfully spoofed the detector)
-        terminated = bool(score > self.success_threshold)
-        # Logic for step limit (Environment-enforced limit)
-        truncated = bool(self.current_step >= self.step_limit)
-        
-        # Clean output instead of crashing
+        # Log if the episode is truncated due to step limits
         if truncated:
             logger.debug(f"Step limit {self.step_limit} reached. Truncating episode.")
 
@@ -144,19 +139,32 @@ class AudioAttackEnv(gym.Env):
         super().reset(seed=seed)
         self.current_step = 0 # Reset step counter at the beginning of each episode
         
-        try:
-            # self.audio_files is now a generator yielding (tensor, label)
+        # Lazy initialization of the data stream (critical for SubprocVecEnv)
+        if self.audio_files is None and self.audio_config is not None:
+            from src.data.loader import get_asvspoof_loader, generator_from_ds
+            logger.info(f"Initializing worker audio stream with config: {self.audio_config}")
             # Fetch the next preprocessed audio tensor from the stream
+            ds = get_asvspoof_loader(**self.audio_config)
+            self.audio_files = itertools.cycle(generator_from_ds(ds)) # Infinite cycling generator
+        
+        if self.audio_files is None:
+            raise RuntimeError("Environment has no audio source. Provide audio_files or audio_config.")
+
+        try:
             self.current_audio, target_label = next(self.audio_files)
             logger.info(f"Environment Reset: Loading new sample (Label: {'Bonafide' if target_label == 1 else 'Spoof'})")
         except StopIteration:
             # Fallback in case the streaming dataset exhausts
-            logger.error("Intel system: Audio stream exhausted.")
-            raise RuntimeError("Audio stream exhausted. Consider recreating the generator or looping the dataset.")
+            logger.error("Audio stream exhausted.")
+            raise RuntimeError("Audio stream exhausted.")
         
-        # The tensor is already preprocessed by loader.py, pass it directly
-        _, embedding = self.detector.get_score_and_embedding(self.current_audio)
-        obs = self._get_obs(embedding) # Observation: The embedding from AASIST3 (160-dim)
+        if self.detector is None:
+            # Return raw audio for initial observation
+            return self._get_obs(self.current_audio), {}
+
+        # Initial inference
+        _, embeddings = self.detector.get_score_and_embedding(self.current_audio)
+        obs = self._get_obs(embeddings[0]) # Observation: The embedding from AASIST3 (160-dim)
 
         return obs, {}
     
