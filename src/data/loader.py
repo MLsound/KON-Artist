@@ -11,12 +11,13 @@ import torchaudio
 from datasets import load_dataset, Audio
 from src.utils.audio import preprocess_audio
 
-def get_asvspoof_loader(split: str = "train", buffer_size: int = 10000):
+def get_asvspoof_loader(split: str = "train", buffer_size: int = 10000, seed: int = 42):
     """
     Loads and shuffles the ASVspoof 2019 LA dataset in streaming mode.
     Args:
     - split: Dataset split to load (e.g., "train", "validation", "test")
     - buffer_size: Size of the shuffle buffer for streaming datasets
+    - seed: Seed for the shuffle buffer
     Returns:
     - A Hugging Face Dataset object with streaming and shuffling enabled.
     """
@@ -28,7 +29,7 @@ def get_asvspoof_loader(split: str = "train", buffer_size: int = 10000):
     ds = ds.cast_column("audio", Audio(decode=False))
 
     # Shuffle buffer is required to bypass the ordered nature of the dataset
-    shuffled_ds = ds.shuffle(seed=42, buffer_size=buffer_size)
+    shuffled_ds = ds.shuffle(seed=seed, buffer_size=buffer_size)
     
     return shuffled_ds
 
