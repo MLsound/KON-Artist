@@ -89,4 +89,30 @@ class WandbAudioCallback(BaseCallback):
                 "global_step": self.num_timesteps
             })
         return True
+
+class EntropyDecayCallback(BaseCallback):
+    """
+    Callback to progressively reduce the entropy coefficient (ent_coef) during training.
+    This encourages exploration early on and exploitation later.
+    """
+    def __init__(self, initial_ent_coef: float, final_ent_coef: float, total_timesteps: int, verbose: int = 0):
+        super().__init__(verbose)
+        self.initial_ent_coef = initial_ent_coef
+        self.final_ent_coef = final_ent_coef
+        self.total_timesteps = total_timesteps
+
+    def _on_step(self) -> bool:
+        # Calculate the new entropy coefficient using linear decay
+        progress = self.num_timesteps / self.total_timesteps
+        new_ent_coef = self.initial_ent_coef + (self.final_ent_coef - self.initial_ent_coef) * min(1.0, progress)
+        
+        # Update the ent_coef in the PPO model
+        self.model.ent_coef = new_ent_coef
+        
+        if self.n_calls % 1000 == 0:
+            logger.debug(f"Step {self.num_timesteps}: ent_coef set to {new_ent_coef:.6f}")
+            if wandb.run is not None:
+                wandb.log({"train/entropy_coefficient": new_ent_coef, "global_step": self.num_timesteps})
+        
+        return True
     
