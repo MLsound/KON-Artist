@@ -29,44 +29,122 @@ class DSPPipeline(torch.nn.Module):
 
     def apply_codec_simulation(self, x: torch.Tensor, format: str = "mp3", bitrate: int = 64000) -> torch.Tensor:
         """
-        Simulates codec compression degradation.
-        Note: The round-trip through BytesIO is computationally expensive for training.
+        Optimized codec simulation using a differentiable approximation.
+        Replaces slow io.BytesIO round-trips with adaptive LPF and quantization noise.
+        
+        - LPF: Simulates bandwidth limiting of low-bitrate codecs.
+        - Quantization: Simulates compression artifacts and bit-depth reduction.
         """
-        config = torchaudio.io.CodecConfig(bit_rate=bitrate)
-        buffer = io.BytesIO()
-        torchaudio.save(buffer, x.cpu(), self.sr, format=format, compression=config)
-        buffer.seek(0)
-        x_compressed, _ = torchaudio.load(buffer)
-        return x_compressed.to(x.device)
+        # 1. Adaptive Bandwidth Limiting (LPF)
+        # For 16kHz audio, Nyquist is 8kHz.
+        # Heuristic: Cutoff frequency scales with bitrate.
+        # e.g., 32kbps -> ~6kHz cutoff, 64kbps+ -> ~8kHz (no cut)
+        max_bw = self.sr / 2
+        cutoff = min(max_bw - 100, (bitrate / 48000) * max_bw)
+        x = F.lowpass_biquad(x, self.sr, cutoff_freq=max(2000.0, cutoff))
 
-    def apply_spectral_tilt(self, x: torch.Tensor, tilt_db_per_octave: float) -> torch.Tensor:
+        # 2. Quantization Noise Simulation
+        # Simulate sub-band quantization artifacts.
+        # Higher bitrate = more 'effective bits' and less noise.
+        # Range: ~2 bits at 8kbps to ~12 bits at 128kbps
+        eff_bits = max(2.0, min(12.0, bitrate / 10000))
+        levels = 2 ** eff_bits
+        
+        # Straight-Through Estimator (STE) for differentiability
+        # This allows gradients to flow back if the agent's policy ever requires it.
+        x_quant = torch.round(x * levels) / levels
+        x = x + (x_quant - x).detach()
+        
+        return x
+
+    def apply_spectral_tilt(self, x: torch.Tensor, tilt_db_per_octave: float, pivot_freq: float = 1000.0) -> torch.Tensor:
         """
-        Adjusts the spectral tilt using a low-pass biquad approximation.
-        The agent controls high-frequency gain.
+        Applies a spectral tilt pivoting around pivot_freq.
+        A positive tilt boosts highs and cuts lows.
+        Uses an FFT-based frequency domain gain ramp for technical precision.
         """
-        return F.lowpass_biquad(x, self.sr, cutoff_freq=2000, Q=0.707) * (1 + tilt_db_per_octave)
+        if tilt_db_per_octave == 0:
+            return x
+            
+        original_shape = x.shape
+        length = x.shape[-1]
+        
+        # We use rfft on the last dimension
+        x_fft = torch.fft.rfft(x, dim=-1)
+        n_freq = x_fft.shape[-1]
+        
+        # Frequencies corresponding to FFT bins
+        freqs = torch.linspace(0, self.sr / 2, n_freq, device=x.device)
+        
+        # Gain calculation: Gain_dB = slope * log2(f / f_pivot)
+        gain_db = tilt_db_per_octave * torch.log2((freqs + 1e-6) / pivot_freq)
+        gain = 10 ** (gain_db / 20)
+        
+        # Apply gain to the complex spectrum
+        x_fft_tilted = x_fft * gain
+        
+        # Inverse FFT to return to time domain
+        x_tilted = torch.fft.irfft(x_fft_tilted, n=length, dim=-1)
+        
+        return x_tilted.view(original_shape)
 
     def apply_harmonics(self, x: torch.Tensor, drive: float) -> torch.Tensor:
         """Generates harmonics via non-linear saturation distortion."""
         return torch.tanh(x * (1 + drive))
+
+    def apply_jitter(self, x: torch.Tensor, jitter_level: float) -> torch.Tensor:
+        """
+        Applies true jitter via stochastic temporal displacement x[t + delta].
+        Delta is a small random shift per sample, implemented via bilinear interpolation.
+        """
+        if jitter_level <= 0:
+            return x
+            
+        original_shape = x.shape
+        if x.dim() == 2:
+            x = x.unsqueeze(0)
+            
+        batch, channels, length = x.shape
+        
+        max_shift = 2.0 
+        displacement = (torch.rand(batch, 1, length, device=x.device) * 2 - 1) * jitter_level * max_shift
+        
+        indices = torch.linspace(0, length - 1, length, device=x.device).repeat(batch, 1, 1)
+        new_indices = indices + displacement
+        
+        normalized_indices = (new_indices / (length - 1)) * 2 - 1
+        
+        x_4d = x.unsqueeze(2) 
+        y_coords = torch.zeros_like(normalized_indices)
+        v_grid = torch.stack([normalized_indices, y_coords], dim=-1)
+        
+        x_jittered = torch.nn.functional.grid_sample(
+            x_4d, 
+            v_grid, 
+            mode='bilinear', 
+            padding_mode='border', 
+            align_corners=True
+        )
+        
+        out = x_jittered.squeeze(2)
+        return out.view(original_shape)
 
     def apply_jitter_shimmer(self, x: torch.Tensor, jitter_level: float, shimmer_level: float) -> torch.Tensor:
         """
         Applies micro-variations in frequency (jitter) and amplitude (shimmer).
         
         Shimmer: Stochastic amplitude modulation.
-        Jitter: Phase jitter approximation via random shift.
+        Jitter: True temporal displacement x[t + delta].
         """
         if shimmer_level > 0:
             noise = torch.randn_like(x) * float(shimmer_level) 
             x = x * (1 + noise)
             
         if jitter_level > 0:
-            phase_shift = torch.randn_like(x) * float(jitter_level)
-            x = x + phase_shift
+            x = self.apply_jitter(x, jitter_level)
 
         return x
-    
+
     def apply_compression(self, x: torch.Tensor, threshold_db: float, ratio: float) -> torch.Tensor:
         """
         Applies a basic dynamic range compressor.
@@ -127,12 +205,3 @@ class DSPPipeline(torch.nn.Module):
             x = x / x.abs().max()
 
         return x
-
-
-# Possible Improvements
-# 1.  **Jitter Implementation**:
-# Currently `apply_jitter_shimmer` adds `phase_shift` directly to the amplitude. This is technically **additive noise**, not jitter. True jitter involves temporal displacement ($x[t + \delta]$). For a thesis, consider implementing jitter using `F.resample` or a variable delay line if it need to be precise about phase artifacts.
-# 2.  **Performance Bottleneck**:
-# The `apply_codec_simulation` method involves `io.BytesIO` and a file-save simulation. Running this inside a training loop for RL will be extremely slow. It is better to pre-compute codec artifacts or use a differentiable approximation if speed becomes an issue.
-# 3.  **Spectral Tilt**:
-# The current `lowpass_biquad` approach is more of a fixed-slope filter than a true spectral tilt. A standard tilt usually pivots around a frequency (e.g., 1kHz) and applies a linear gain/attenuation slope across the entire spectrum.
