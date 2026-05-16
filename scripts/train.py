@@ -11,9 +11,15 @@ This script manages the end-to-end Reinforcement Learning pipeline:
 import os
 import logging
 import warnings
+import sys
+from pathlib import Path
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
+
+# Add the project root to the Python path
+sys.path.append(str(Path(__file__).parent.parent))
+
 from src.models.aasist import AASISTWrapper
 from src.env.audio_attack import AudioAttackEnv
 from src.env.wrappers import VecDetectorWrapper
@@ -34,7 +40,7 @@ logger = get_logger(name=__file__,
 TOTAL_UPDATES = 20  # Total number of PPO updates (each update processes N_STEPS)
 N_STEPS = 4096  # 2048 is PPO's default rollout buffer size; adjust if using a custom buffer implementation
 EPOCHS = 15  # Number of epochs per PPO update (default is 4 in stable-baselines3)
-BATCH = 256 # Batch size for PPO updates (default is 64 in stable-baselines3, but can be adjusted based on memory constraints)a
+BATCH_SIZE = 256 # Batch size for PPO updates (default is 64 in stable-baselines3, but can be adjusted based on memory constraints)
 # Automatically scale workers based on CPU cores (All cores - 1 to leave room for the main process)
 N_ENVS = max(1, os.cpu_count() - 1)  # Number of parallel environments (CPU workers)
 
@@ -44,7 +50,7 @@ N_ENVS = max(1, os.cpu_count() - 1)  # Number of parallel environments (CPU work
 TOTAL_ROLLOUT_BUFFER = N_STEPS * N_ENVS  # Total samples collected per PPO update
 TOTAL_TIMESTEPS = TOTAL_ROLLOUT_BUFFER * TOTAL_UPDATES  # Total timesteps for training
 TOTAL_PASSES = TOTAL_UPDATES * EPOCHS  # Total passes through the data (for logging purposes)
-BATCH = min(BATCH, N_STEPS * N_ENVS) # Ensure batch size does not exceed the number of steps in the buffer
+BATCH_SIZE = min(BATCH_SIZE, N_STEPS * N_ENVS) # Ensure batch size does not exceed the number of steps in the buffer
 # Log the actual batch size being used after adjustment
 logger.info(f"PPO Configuration: RolloutBuffer={TOTAL_ROLLOUT_BUFFER}, MiniBatch={BATCH_SIZE}, TotalSteps={TOTAL_TIMESTEPS}")
 
@@ -96,10 +102,9 @@ def train():
             policy="MlpPolicy",
             env=env,
             n_steps=N_STEPS,
-            batch_size=BATCH,
+            batch_size=BATCH_SIZE,
             n_epochs=EPOCHS,
-            verbose=1,
-            tensorboard_log="outputs/tensorboard/"
+            verbose=1
         )
         
         # 5. Callbacks
@@ -109,7 +114,7 @@ def train():
             "architecture": "AASIST3",
             "timestamp": timestamp,
             "epochs": EPOCHS,
-            "BATCH": BATCH,
+            "BATCH_SIZE": BATCH_SIZE,
             "n_steps": N_STEPS,
             "total_timesteps": TOTAL_TIMESTEPS
         }

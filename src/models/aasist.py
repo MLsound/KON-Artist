@@ -43,7 +43,7 @@ class AASISTWrapper:
         repo_path = str(project_root / "third_party" / "AASIST3")
         logger.debug(f"Attempting to load AASIST3 model from: {repo_path}")
         if repo_path not in sys.path:
-            sys.path.insert(0, repo_path) # Insert at 0 to prioritize this 'model' module
+            sys.path.append(repo_path) # Append to avoid shadowing global packages like 'datasets'
             logger.debug(f"Added {repo_path} to sys.path for AASIST3 imports.")
         
         try:
@@ -93,11 +93,11 @@ class AASISTWrapper:
         self._embedding = None
         
         with torch.no_grad():
-            # 1. Prepare input: Ensure [B, 1, L]
-            if waveform.dim() == 2:
-                waveform = waveform.unsqueeze(0)
+            # 1. Prepare input: Ensure [B, L] for AASIST3/Wav2Vec2
+            if waveform.dim() == 3:
+                waveform = waveform.squeeze(1) # [B, 1, L] -> [B, L]
             elif waveform.dim() == 1:
-                waveform = waveform.unsqueeze(0).unsqueeze(0)
+                waveform = waveform.unsqueeze(0) # [L] -> [1, L]
                 
             waveform = waveform.to(self.device)
             
