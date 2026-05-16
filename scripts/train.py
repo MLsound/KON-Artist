@@ -17,6 +17,7 @@ from pathlib import Path
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
+from stable_baselines3.common.callbacks import CheckpointCallback
 
 # Add the project root to the Python path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -35,6 +36,17 @@ def load_config(config_path="configs/train_config.yaml"):
     """Loads training configuration from a YAML file."""
     with open(config_path, "r") as f:
         return yaml.safe_load(f)
+
+def get_latest_checkpoint(checkpoint_dir):
+    """Finds the most recent checkpoint file in the given directory."""
+    if not os.path.exists(checkpoint_dir):
+        return None
+    checkpoints = [f for f in os.listdir(checkpoint_dir) if f.endswith(".zip")]
+    if not checkpoints:
+        return None
+    # Sort by modification time to get the latest one
+    checkpoints.sort(key=lambda x: os.path.getmtime(os.path.join(checkpoint_dir, x)), reverse=True)
+    return os.path.join(checkpoint_dir, checkpoints[0])
 
 # Initialize configuration
 cfg = load_config()
@@ -121,16 +133,31 @@ def train():
 
         # 4. Agent Instantiation
         logger.info("Configuring PPO agent.")
-        model = PPO(
-            policy=cfg['ppo']['policy'],
-            env=env,
-            n_steps=cfg['ppo']['n_steps'],
-            batch_size=BATCH_SIZE,
-            n_epochs=cfg['ppo']['epochs'],
-            learning_rate=cfg['ppo']['learning_rate'],
-            verbose=cfg['ppo']['verbose'],
-            tensorboard_log=cfg['logging']['tensorboard_log']
-        )
+        
+        checkpoint_cfg = cfg['logging'].get('checkpoint', {})
+        latest_checkpoint = None
+        if checkpoint_cfg.get('load_last', False):
+            latest_checkpoint = get_latest_checkpoint(checkpoint_cfg.get('save_path', "outputs/checkpoints/"))
+            
+        if latest_checkpoint:
+            logger.info(f"Resuming training from checkpoint: {latest_checkpoint}")
+            model = PPO.load(
+                latest_checkpoint, 
+                env=env,
+                learning_rate=cfg['ppo']['learning_rate'],
+                tensorboard_log=cfg['logging']['tensorboard_log']
+            )
+        else:
+            model = PPO(
+                policy=cfg['ppo']['policy'],
+                env=env,
+                n_steps=cfg['ppo']['n_steps'],
+                batch_size=BATCH_SIZE,
+                n_epochs=cfg['ppo']['epochs'],
+                learning_rate=cfg['ppo']['learning_rate'],
+                verbose=cfg['ppo']['verbose'],
+                tensorboard_log=cfg['logging']['tensorboard_log']
+            )
         
         # 5. Callbacks
         timestamp = create_timestamp()
@@ -139,7 +166,8 @@ def train():
             "architecture": cfg['model']['detector_name'],
             "timestamp": timestamp,
             "config": cfg,
-            "total_timesteps": TOTAL_TIMESTEPS
+            "total_timesteps": TOTAL_TIMESTEPS,
+            "resumed_from": latest_checkpoint
         }
         reward_callback = RewardLoggerCallback(
             check_freq=cfg['logging']['reward_log_freq'], 
@@ -148,11 +176,20 @@ def train():
         )
         wandb_callback = WandbAudioCallback(config=metadata)
         
+        # Checkpoint Callback
+        save_freq_steps = checkpoint_cfg.get('save_freq', 1) * TOTAL_ROLLOUT_BUFFER
+        checkpoint_callback = CheckpointCallback(
+            save_freq=max(1, save_freq_steps),
+            save_path=checkpoint_cfg.get('save_path', "outputs/checkpoints/"),
+            name_prefix=checkpoint_cfg.get('name_prefix', "kon_artist_ppo")
+        )
+        
         # 6. Training Execution
         logger.info(f"Beginning training: TOTAL_TIMESTEPS={TOTAL_TIMESTEPS}, BATCH_TOTAL={TOTAL_ROLLOUT_BUFFER}")
         model.learn(
             total_timesteps=TOTAL_TIMESTEPS,
-            callback=[reward_callback, wandb_callback]
+            callback=[reward_callback, wandb_callback, checkpoint_callback],
+            reset_num_timesteps=False if latest_checkpoint else True
         )
         
         logger.info("Training finished. Saving model.")

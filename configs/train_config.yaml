@@ -32,6 +32,11 @@ logging:
   log_dir: "outputs/"
   tensorboard_log: null # Set to a path if tensorboard is needed
   reward_log_freq: 1
+  checkpoint:
+    save_freq: 1 # Number of PPO UPDATES between checkpoints (will be converted to steps in script)
+    save_path: "outputs/checkpoints/"
+    name_prefix: "kon_artist_ppo"
+    load_last: true # Automatically load the last checkpoint if it exists
   wandb:
     project: "kon-artist"
     entity: "ml-sound"
