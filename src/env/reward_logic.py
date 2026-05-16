@@ -31,7 +31,17 @@ def compute_attack_reward(score: float, self: object) -> tuple:
     # Configuration recovery (with defaults for the Wrapper)
     success_threshold = getattr(self, "success_threshold", 0.5)
     current_step = getattr(self, "current_step", "N/A")
+    total_timesteps = getattr(self, "total_timesteps", None)
     last_params = getattr(self, "last_dsp_params", "Batched")
+    worker_id = getattr(self, "current_worker", "N/A")
+    seed = getattr(self, "current_seed", "N/A")
+    
+    # PROGRESS FORMATTING
+    if isinstance(current_step, int) and total_timesteps:
+        progress = (current_step / total_timesteps) * 100
+        step_str = f"{current_step}/{total_timesteps} ({progress:.1f}%)"
+    else:
+        step_str = f"{current_step}"
     
     # REWARD FUNCTION
     # Reward: Log-probability of appearing 'Bonafide'
@@ -59,6 +69,6 @@ def compute_attack_reward(score: float, self: object) -> tuple:
         
     # Telemetry Logging
     # Only logs specific step info if running in single-env mode
-    logger.info(f"Step {current_step} | DSP: {last_params} | Score: {score:.4f} | Reward: {reward:.2f}")
+    logger.info(f"Worker {worker_id} | Step {step_str} | DSP: {last_params} | Score: {score:.4f} | Reward: {reward:.2f}")
 
     return reward, terminated

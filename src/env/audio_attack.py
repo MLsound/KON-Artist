@@ -29,6 +29,10 @@ class AudioAttackEnv(gym.Env):
         self.detector = detector
         self.audio_config = audio_config
         
+        # Extract rank and seed for identifying logs per worker
+        self.rank = audio_config.get("rank", 0) if audio_config else 0
+        self.seed = audio_config.get("seed", 42) if audio_config else 42
+        
         # Initialize audio_files iterator
         if audio_files is not None:
             self.audio_files = itertools.cycle(audio_files) # Create an infinite iterator from the audio stream generator
@@ -104,7 +108,12 @@ class AudioAttackEnv(gym.Env):
         if self.detector is None:
             obs = self._get_obs(processed_audio)
             # Return dummy values for reward and termination; to be filled by VecEnvWrapper
-            return obs, 0.0, False, False, {'processed_audio': processed_audio, 'dsp_params': self.last_dsp_params}
+            return obs, 0.0, False, False, {
+                'processed_audio': processed_audio, 
+                'dsp_params': self.last_dsp_params,
+                'worker_id': self.rank,
+                'seed': self.seed
+            }
 
         # 2. Evaluation by AASIST3
         # Capture both score and embedding for reward and observation
@@ -128,7 +137,9 @@ class AudioAttackEnv(gym.Env):
             'reward': reward,
             'dsp_params': self.last_dsp_params,
             'terminated': terminated,
-            'truncated': truncated
+            'truncated': truncated,
+            'worker_id': self.rank,
+            'seed': self.seed
         }
 
         return obs, reward, terminated, truncated, info
@@ -139,12 +150,17 @@ class AudioAttackEnv(gym.Env):
         super().reset(seed=seed)
         self.current_step = 0 # Reset step counter at the beginning of each episode
         
+        # Initial info dict for reset
+        info = {'worker_id': self.rank, 'seed': self.seed}
+        
         # Lazy initialization of the data stream (critical for SubprocVecEnv)
         if self.audio_files is None and self.audio_config is not None:
             from src.data.loader import get_asvspoof_loader, generator_from_ds
-            logger.info(f"Initializing worker audio stream with config: {self.audio_config}")
+            # Filter config to only include arguments expected by get_asvspoof_loader
+            loader_config = {k: v for k, v in self.audio_config.items() if k != 'rank'}
+            logger.info(f"Initializing worker audio stream with config: {loader_config}")
             # Fetch the next preprocessed audio tensor from the stream
-            ds = get_asvspoof_loader(**self.audio_config)
+            ds = get_asvspoof_loader(**loader_config)
             self.audio_files = itertools.cycle(generator_from_ds(ds)) # Infinite cycling generator
         
         if self.audio_files is None:
@@ -160,11 +176,11 @@ class AudioAttackEnv(gym.Env):
         
         if self.detector is None:
             # Return raw audio for initial observation
-            return self._get_obs(self.current_audio), {}
+            return self._get_obs(self.current_audio), info
 
         # Initial inference
         _, embeddings = self.detector.get_score_and_embedding(self.current_audio)
         obs = self._get_obs(embeddings[0]) # Observation: The embedding from AASIST3 (160-dim)
 
-        return obs, {}
+        return obs, info
     

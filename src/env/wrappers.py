@@ -27,6 +27,7 @@ class VecDetectorWrapper(VecEnvWrapper):
             low=-1e5, high=1e5, shape=(160,), dtype=np.float32
         )
         self.success_threshold = 0.5
+        self.total_steps = 0 # Global step counter for vectorized environments
 
     def reset(self):
         """Batched reset for all environments."""
@@ -41,6 +42,7 @@ class VecDetectorWrapper(VecEnvWrapper):
         """Batched step wait for all environments."""
         obs, rewards, dones, infos = self.venv.step_wait()
         # obs is [N_ENVS, 64600]
+        self.total_steps += self.num_envs
         
         waveform = torch.from_numpy(obs).unsqueeze(1).float()
         scores, embeddings = self.detector.get_score_and_embedding(waveform)
@@ -52,6 +54,12 @@ class VecDetectorWrapper(VecEnvWrapper):
             score = scores[i] # Probability of being classified as 'Bonafide'
             truncated = infos[i].get('truncated', False) # Check if the episode was truncated by the environment
             
+            # Extract worker-specific info
+            self.current_worker = infos[i].get('worker_id', 'N/A')
+            self.current_seed = infos[i].get('seed', 'N/A')
+
+            # Update current_step for logging in reward_logic
+            self.current_step = self.total_steps
             # Compute reward and check for termination
             reward, terminated = compute_attack_reward(score, self)
             

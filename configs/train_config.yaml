@@ -1,0 +1,37 @@
+# KON-Artist Training Configuration
+
+# PPO Hyperparameters
+ppo:
+  total_updates: 20
+  n_steps: 4096
+  epochs: 15
+  batch_size: 256
+  policy: "MlpPolicy"
+  verbose: 1
+  learning_rate: 0.0003 # Default PPO value
+
+# Environment Settings
+env:
+  n_envs: -1 # -1 means auto-scale based on CPU cores (All cores - 1)
+  seed: 42
+  success_threshold: 0.5
+  step_limit: 10
+
+# Audio Data Settings
+audio:
+  split: "train"
+  buffer_size: 1000
+
+# Model Settings
+model:
+  detector_name: "MTUCI/AASIST3"
+  device: "cuda"
+
+# Logging & Callbacks
+logging:
+  log_dir: "outputs/"
+  tensorboard_log: null # Set to a path if tensorboard is needed
+  reward_log_freq: 1
+  wandb:
+    project: "kon-artist"
+    entity: "ml-sound"
