@@ -25,7 +25,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 from src.models.aasist import AASISTWrapper
 from src.env.audio_attack import AudioAttackEnv
 from src.env.wrappers import VecDetectorWrapper
-from src.utils.callbacks import RewardLoggerCallback, WandbAudioCallback
+from src.utils.callbacks import RewardLoggerCallback, WandbAudioCallback, EntropyDecayCallback
 from src.utils.logger import get_logger
 from src.utils.misc import create_timestamp
 
@@ -47,6 +47,21 @@ def get_latest_checkpoint(checkpoint_dir):
     # Sort by modification time to get the latest one
     checkpoints.sort(key=lambda x: os.path.getmtime(os.path.join(checkpoint_dir, x)), reverse=True)
     return os.path.join(checkpoint_dir, checkpoints[0])
+
+def linear_schedule(initial_value: float):
+    """
+    Linear learning rate schedule.
+    :param initial_value: (float) Initial learning rate.
+    :return: (function)
+    """
+    def func(progress_remaining: float):
+        """
+        Progress will decrease from 1 (beginning) to 0
+        :param progress_remaining: (float)
+        :return: (float)
+        """
+        return progress_remaining * initial_value
+    return func
 
 # Initialize configuration
 cfg = load_config()
@@ -139,12 +154,15 @@ def train():
         if checkpoint_cfg.get('load_last', False):
             latest_checkpoint = get_latest_checkpoint(checkpoint_cfg.get('save_path', "outputs/checkpoints/"))
             
+        # Initialize learning rate schedule
+        lr_schedule = linear_schedule(cfg['ppo']['learning_rate'])
+
         if latest_checkpoint:
             logger.info(f"Resuming training from checkpoint: {latest_checkpoint}")
             model = PPO.load(
                 latest_checkpoint, 
                 env=env,
-                learning_rate=cfg['ppo']['learning_rate'],
+                learning_rate=lr_schedule,
                 tensorboard_log=cfg['logging']['tensorboard_log']
             )
         else:
@@ -154,7 +172,7 @@ def train():
                 n_steps=cfg['ppo']['n_steps'],
                 batch_size=BATCH_SIZE,
                 n_epochs=cfg['ppo']['epochs'],
-                learning_rate=cfg['ppo']['learning_rate'],
+                learning_rate=lr_schedule,
                 verbose=cfg['ppo']['verbose'],
                 tensorboard_log=cfg['logging']['tensorboard_log']
             )
@@ -176,6 +194,9 @@ def train():
         )
         wandb_callback = WandbAudioCallback(config=metadata)
         
+        # Entropy Decay: From 0.01 (exploration) to 0.001 (exploitation)
+        entropy_callback = EntropyDecayCallback(initial_ent_coef=0.01, final_ent_coef=0.001, total_timesteps=TOTAL_TIMESTEPS)
+
         # Checkpoint Callback
         save_freq_steps = checkpoint_cfg.get('save_freq', 1) * TOTAL_ROLLOUT_BUFFER
         checkpoint_callback = CheckpointCallback(
@@ -188,7 +209,7 @@ def train():
         logger.info(f"Beginning training: TOTAL_TIMESTEPS={TOTAL_TIMESTEPS}, BATCH_TOTAL={TOTAL_ROLLOUT_BUFFER}")
         model.learn(
             total_timesteps=TOTAL_TIMESTEPS,
-            callback=[reward_callback, wandb_callback, checkpoint_callback],
+            callback=[reward_callback, wandb_callback, checkpoint_callback, entropy_callback],
             reset_num_timesteps=False if latest_checkpoint else True
         )
         
