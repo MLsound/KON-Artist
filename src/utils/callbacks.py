@@ -28,9 +28,10 @@ class RewardLoggerCallback(BaseCallback):
         self.log_dir = log_dir
         self.id = id
         self.save_path = os.path.join(log_dir, f'history/rewards_{id}.csv')
+        self.last_buffer_len = 0
         
         # Create directory if it does not exist
-        os.makedirs(log_dir, exist_ok=True)
+        os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
 
     def _on_training_start(self) -> None:
         """Initialize the CSV file with headers at the start of training."""
@@ -41,23 +42,27 @@ class RewardLoggerCallback(BaseCallback):
 
     def _on_step(self) -> bool:
         """
-        Log the last episodic reward from the model buffer at a fixed frequency.
+        Log new episodic rewards from the model buffer.
         SB3 stores the cumulative reward in 'ep_info_buffer'.
         """
-        if self.n_calls % self.check_freq == 0:
-            # Extract the last reward if available in the environment buffer
-            if len(self.model.ep_info_buffer) > 0:
-                last_reward = self.model.ep_info_buffer[-1]['r']
-                with open(self.save_path, 'a', newline='') as f:
-                    writer = csv.writer(f)
+        # Check if new episodes have finished
+        current_buffer_len = len(self.model.ep_info_buffer)
+        if current_buffer_len > self.last_buffer_len:
+            # Determine how many new episodes finished since last check
+            num_new_episodes = current_buffer_len - self.last_buffer_len
+            
+            with open(self.save_path, 'a', newline='') as f:
+                writer = csv.writer(f)
+                # Log each new episode reward
+                for i in range(current_buffer_len - num_new_episodes, current_buffer_len):
+                    last_reward = self.model.ep_info_buffer[i]['r']
                     writer.writerow([self.num_timesteps, last_reward])
-                
-                i = self.num_timesteps
-                if self.verbose > 0:
-                    if i % 10 == 0:
-                        logger.info(f"Step {i}: Reward saved: {last_reward}")
-                elif self.verbose > 1:
-                    logger.debug(f"Step {i}: Reward saved: {last_reward}")
+                    
+                    if self.verbose > 0:
+                        logger.info(f"Step {self.num_timesteps}: Episode reward saved: {last_reward:.2f}")
+            
+            self.last_buffer_len = current_buffer_len
+            
         return True
 
 

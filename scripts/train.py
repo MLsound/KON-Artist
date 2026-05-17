@@ -15,7 +15,7 @@ import sys
 import yaml
 from pathlib import Path
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
+from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv, VecMonitor
 from stable_baselines3.common.monitor import Monitor
 from stable_baselines3.common.callbacks import CheckpointCallback
 
@@ -118,8 +118,7 @@ def make_env(rank: int, seed: int = 42):
         env.success_threshold = cfg['env']['success_threshold']
         env.step_limit = cfg['env']['step_limit']
         
-        # Monitor is required for RewardLoggerCallback to access ep_info_buffer
-        return Monitor(env)
+        return env
     return _init
 
 def train():
@@ -145,8 +144,12 @@ def train():
         env = VecDetectorWrapper(env, detector)
         env.total_timesteps = TOTAL_TIMESTEPS
         env.success_threshold = cfg['env']['success_threshold']
+        
+        # 4. Wrap with VecMonitor to track actual rewards
+        # VecMonitor is required for RewardLoggerCallback to access ep_info_buffer
+        env = VecMonitor(env)
 
-        # 4. Agent Instantiation
+        # 5. Agent Instantiation
         logger.info("Configuring PPO agent.")
         
         checkpoint_cfg = cfg['logging'].get('checkpoint', {})
