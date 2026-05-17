@@ -197,8 +197,13 @@ def train():
         )
         wandb_callback = WandbAudioCallback(config=metadata)
         
-        # Entropy Decay: From 0.01 (exploration) to 0.001 (exploitation)
-        entropy_callback = EntropyDecayCallback(initial_ent_coef=0.01, final_ent_coef=0.001, total_timesteps=TOTAL_TIMESTEPS)
+        # Entropy Decay: From exploration to exploitation
+        entropy_cfg = cfg['ppo'].get('entropy', {'initial': 0.01, 'final': 0.001})
+        entropy_callback = EntropyDecayCallback(
+            initial_ent_coef=entropy_cfg['initial'], 
+            final_ent_coef=entropy_cfg['final'], 
+            total_timesteps=TOTAL_TIMESTEPS
+        )
 
         # Checkpoint Callback
         save_freq_steps = checkpoint_cfg.get('save_freq', 1) * TOTAL_ROLLOUT_BUFFER

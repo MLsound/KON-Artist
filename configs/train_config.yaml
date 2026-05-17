@@ -9,6 +9,9 @@ ppo:
   policy: "MlpPolicy"
   verbose: 1
   learning_rate: 0.0003 # Default PPO value
+  entropy:
+    initial: 0.01
+    final: 0.001
 
 # Environment Settings
 env:
