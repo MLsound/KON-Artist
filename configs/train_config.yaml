@@ -2,10 +2,11 @@
 
 # PPO Hyperparameters
 ppo:
-  total_updates: 20
+  total_updates: 10
   n_steps: 4096
-  epochs: 15
+  epochs: 10
   batch_size: 256
+  clip_range: 0.3
   policy: "MlpPolicy"
   verbose: 1
   learning_rate: 0.0003 # Default PPO value

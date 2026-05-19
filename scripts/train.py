@@ -176,6 +176,7 @@ def train():
                 batch_size=BATCH_SIZE,
                 n_epochs=cfg['ppo']['epochs'],
                 learning_rate=lr_schedule,
+                clip_range=cfg['ppo'].get('clip_range', 0.2),
                 verbose=cfg['ppo']['verbose'],
                 tensorboard_log=cfg['logging']['tensorboard_log']
             )
