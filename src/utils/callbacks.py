@@ -116,4 +116,27 @@ class EntropyDecayCallback(BaseCallback):
                 wandb.log({"train/entropy_coefficient": new_ent_coef, "global_step": self.num_timesteps})
         
         return True
+
+
+class LearningRateLoggerCallback(BaseCallback):
+    """
+    Callback to log the current learning rate to W&B and logs.
+    Useful for verifying the annealing schedule.
+    """
+    def __init__(self, verbose: int = 0):
+        super().__init__(verbose)
+
+    def _on_step(self) -> bool:
+        if self.n_calls % 1000 == 0:
+            # Retrieve learning rate from the optimizer
+            # SB3 stores the current LR in the model.lr_schedule if functional
+            # But the actual value used in the optimizer is more definitive
+            current_lr = self.model.policy.optimizer.param_groups[0]['lr']
+            
+            if wandb.run is not None:
+                wandb.log({"train/learning_rate": current_lr, "global_step": self.num_timesteps})
+            
+            if self.verbose > 0:
+                logger.info(f"Step {self.num_timesteps}: Current Learning Rate: {current_lr:.2e}")
+        return True
     

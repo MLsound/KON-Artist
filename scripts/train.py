@@ -25,7 +25,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 from src.models.aasist import AASISTWrapper
 from src.env.audio_attack import AudioAttackEnv
 from src.env.wrappers import VecDetectorWrapper
-from src.utils.callbacks import RewardLoggerCallback, WandbAudioCallback, EntropyDecayCallback
+from src.utils.callbacks import RewardLoggerCallback, WandbAudioCallback, EntropyDecayCallback, LearningRateLoggerCallback
 from src.utils.logger import get_logger
 from src.utils.misc import create_timestamp
 
@@ -64,40 +64,27 @@ def linear_schedule(initial_value: float):
     return func
 
 # Initialize configuration
-cfg = load_config()
+cfg = load_config() # Load training configuration from YAML file
 
 # Initialize logger for the current module
 logger = get_logger(name=__file__,
                     log_file=os.path.join(cfg['logging']['log_dir'], "train_session.log"),
                     level=logging.INFO)
 
-# TRAIN SETTINGS
-# # Colab 5h limit: 70,560 to 88,200 steps max (17~21 iterations for 4096 n_steps)
-# TOTAL_UPDATES = 20  # Total number of PPO updates (each update processes N_STEPS)
-# N_STEPS = 4096  # 2048 is PPO's default rollout buffer size; adjust if using a custom buffer implementation
-# EPOCHS = 15  # Number of epochs per PPO update (default is 4 in stable-baselines3)
-# BATCH_SIZE = 256 # Batch size for PPO updates (default is 64 in stable-baselines3, but can be adjusted based on memory constraints)
-# # Automatically scale workers based on CPU cores (All cores - 1 to leave room for the main process)
-# N_ENVS = max(1, os.cpu_count() - 1)  # Number of parallel environments (CPU workers)
-
-# # PPO SCALING RULE: 
-# # Increasing N_ENVS increases sample diversity per gradient update, which usually allows for more stable learning
-# # but requires recalculating total timesteps to keep benchmarking comparable.
-# TOTAL_ROLLOUT_BUFFER = N_STEPS * N_ENVS  # Total samples collected per PPO update
-# TOTAL_TIMESTEPS = TOTAL_ROLLOUT_BUFFER * TOTAL_UPDATES  # Total timesteps for training
-# TOTAL_PASSES = TOTAL_UPDATES * EPOCHS  # Total passes through the data (for logging purposes)
-# BATCH_SIZE = min(BATCH_SIZE, N_STEPS * N_ENVS) # Ensure batch size does not exceed the number of steps in the buffer
-# # Log the actual batch size being used after adjustment
-
 # DERIVED SETTINGS & AUTO-SCALING
+# Automatically scale workers based on CPU cores (All cores - 1 to leave room for the main process)
 N_ENVS = cfg['env']['n_envs']
+# Increasing N_ENVS increases sample diversity per gradient update, which usually allows for more stable learning
+# but requires recalculating total timesteps to keep benchmarking comparable.
 if N_ENVS == -1:
-    N_ENVS = max(1, os.cpu_count() - 1)
+    N_ENVS = max(1, os.cpu_count() - 1) # Number of parallel environments (CPU workers)
 
-TOTAL_ROLLOUT_BUFFER = cfg['ppo']['n_steps'] * N_ENVS
-TOTAL_TIMESTEPS = TOTAL_ROLLOUT_BUFFER * cfg['ppo']['total_updates']
-BATCH_SIZE = min(cfg['ppo']['batch_size'], TOTAL_ROLLOUT_BUFFER)
+# PPO SCALING RULE: Total timesteps should be divisible by (n_steps * n_envs) to ensure full batches during updates.
+TOTAL_ROLLOUT_BUFFER = cfg['ppo']['n_steps'] * N_ENVS # Total samples collected per PPO update (must be divisible by batch_size)
+TOTAL_TIMESTEPS = TOTAL_ROLLOUT_BUFFER * cfg['ppo']['total_updates'] # Total timesteps for training (must be divisible by batch_size)
+BATCH_SIZE = min(cfg['ppo']['batch_size'], TOTAL_ROLLOUT_BUFFER) # Ensure batch size does not exceed the number of steps in the buffer
 
+# Log the actual training configuration for transparency and debugging
 logger.info(f"PPO Configuration: RolloutBuffer={TOTAL_ROLLOUT_BUFFER}, MiniBatch={BATCH_SIZE}, TotalSteps={TOTAL_TIMESTEPS}")
 
 def make_env(rank: int, seed: int = 42):
@@ -197,6 +184,7 @@ def train():
             log_dir=cfg['logging']['log_dir']
         )
         wandb_callback = WandbAudioCallback(config=metadata)
+        lr_callback = LearningRateLoggerCallback(verbose=1)
         
         # Entropy Decay: From exploration to exploitation
         entropy_cfg = cfg['ppo'].get('entropy', {'initial': 0.01, 'final': 0.001})
@@ -218,7 +206,7 @@ def train():
         logger.info(f"Beginning training: TOTAL_TIMESTEPS={TOTAL_TIMESTEPS}, BATCH_TOTAL={TOTAL_ROLLOUT_BUFFER}")
         model.learn(
             total_timesteps=TOTAL_TIMESTEPS,
-            callback=[reward_callback, wandb_callback, checkpoint_callback, entropy_callback],
+            callback=[reward_callback, wandb_callback, checkpoint_callback, entropy_callback, lr_callback],
             reset_num_timesteps=False if latest_checkpoint else True
         )
         

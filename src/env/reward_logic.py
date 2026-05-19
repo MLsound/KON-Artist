@@ -53,19 +53,22 @@ def compute_attack_reward(score: float, self: object) -> tuple:
     # Optional: Normalize it to a slightly positive/bounded scale for PPO
     reward += vertical_shift # shift it so the minimum expected log (-25) becomes 0
     logger.debug(f"Shifted Log Reward: {reward}") # Debugging statement to trace shifted reward calculation
-    
+
+    # TWO-STAGE PROGRESSIVE REWARD ACCELERATION
+    # Stage 1: Intermediate Directional Signal (10% milestone)
+    if score > 0.10:
+        reward += 25.0
+        logger.debug(f"Stage 1 Bonus (+25) applied. Current reward: {reward}")
+
+    # Stage 2: Ultimate Evasion Objective (Definitive bypass threshold)
+    if score > 0.50:
+        reward += 100.0
+        logger.info(f"--- ATTACK SUCCESSFUL (Stage 2): Score {score:.4f} ---")
+        logger.debug(f"Stage 2 Bonus (+100) applied. Current reward: {reward}")
+
     # COMPLETION CRITERIA
     # If the score exceeds a certain threshold, we can consider the episode successful
     terminated = bool(score > success_threshold) # Logic for completion (Agent successfully spoofed the detector)
-    
-    # SUCCESS BONUS
-    if terminated:
-        # Double the reward if we bypass the model (>0.5)
-        # This creates a massive 'gravity' pull toward the bonafide class.
-        success_bonus = 50.0 # Large bonus to create a strong incentive for successful attacks
-        reward += success_bonus
-        logger.info(f"--- ATTACK SUCCESSFUL: Score {score:.4f} ---")
-        logger.debug(f"Reward after success bonus: {reward}") # Debugging statement to trace reward after success bonus
         
     # Telemetry Logging
     # Only logs specific step info if running in single-env mode
