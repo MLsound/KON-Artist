@@ -28,7 +28,6 @@ class RewardLoggerCallback(BaseCallback):
         self.log_dir = log_dir
         self.id = id
         self.save_path = os.path.join(log_dir, f'history/rewards_{id}.csv')
-        self.last_buffer_len = 0
         
         # Create directory if it does not exist
         os.makedirs(os.path.dirname(self.save_path), exist_ok=True)
@@ -42,26 +41,23 @@ class RewardLoggerCallback(BaseCallback):
 
     def _on_step(self) -> bool:
         """
-        Log new episodic rewards from the model buffer.
-        SB3 stores the cumulative reward in 'ep_info_buffer'.
+        Log rewards for every step by inspecting environment 'infos'.
         """
-        # Check if new episodes have finished
-        current_buffer_len = len(self.model.ep_info_buffer)
-        if current_buffer_len > self.last_buffer_len:
-            # Determine how many new episodes finished since last check
-            num_new_episodes = current_buffer_len - self.last_buffer_len
-            
+        # Retrieve 'infos' from local variables (available during collect_rollouts)
+        infos = self.locals.get("infos")
+        if infos is not None:
+            # We use 'a' (append) mode to add to the existing file
             with open(self.save_path, 'a', newline='') as f:
                 writer = csv.writer(f)
-                # Log each new episode reward
-                for i in range(current_buffer_len - num_new_episodes, current_buffer_len):
-                    last_reward = self.model.ep_info_buffer[i]['r']
-                    writer.writerow([self.num_timesteps, last_reward])
-                    
-                    if self.verbose > 0:
-                        logger.info(f"Step {self.num_timesteps}: Episode reward saved: {last_reward:.2f}")
-            
-            self.last_buffer_len = current_buffer_len
+                for info in infos:
+                    # 'reward' is added to 'info' by our VecDetectorWrapper in every step
+                    if "reward" in info:
+                        reward = info["reward"]
+                        writer.writerow([self.num_timesteps, reward])
+                        
+                    # Also log if an episode finished (optional, but 'reward' above covers the terminal reward too)
+                    if self.verbose > 1 and "episode" in info:
+                        logger.info(f"Step {self.num_timesteps}: Episode finished with reward: {info['episode']['r']:.2f}")
             
         return True
 

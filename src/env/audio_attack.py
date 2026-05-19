@@ -104,15 +104,21 @@ class AudioAttackEnv(gym.Env):
         processed_audio = self.dsp(self.current_audio, self.last_dsp_params)
         logger.debug(f"Processed audio shape: {processed_audio.shape}") # Debugging statement to trace audio processing
         
+        # Check for truncation (step limit) regardless of mode
+        truncated = bool(self.current_step >= self.step_limit)
+        if truncated:
+            logger.debug(f"Step limit {self.step_limit} reached. Truncating episode.")
+
         # If no detector is provided, return raw audio for batch inference in a wrapper
         if self.detector is None:
             obs = self._get_obs(processed_audio)
             # Return dummy values for reward and termination; to be filled by VecEnvWrapper
-            return obs, 0.0, False, False, {
+            return obs, 0.0, False, truncated, {
                 'processed_audio': processed_audio, 
                 'dsp_params': self.last_dsp_params,
                 'worker_id': self.rank,
-                'seed': self.seed
+                'seed': self.seed,
+                'truncated': truncated
             }
 
         # 2. Evaluation by AASIST3
@@ -125,11 +131,6 @@ class AudioAttackEnv(gym.Env):
                 
         # 3. Compute reward and check for termination
         reward, terminated = compute_attack_reward(score, self) # Centralized call ensures logic parity with non-vectorized env
-        truncated = bool(self.current_step >= self.step_limit) # Logic for step limit (Environment-enforced limit)
-        
-        # Log if the episode is truncated due to step limits
-        if truncated:
-            logger.debug(f"Step limit {self.step_limit} reached. Truncating episode.")
 
         # Collect info for logging and analysis
         info = {

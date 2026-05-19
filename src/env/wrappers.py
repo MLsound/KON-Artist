@@ -44,32 +44,54 @@ class VecDetectorWrapper(VecEnvWrapper):
         # obs is [N_ENVS, 64600]
         self.total_steps += self.num_envs
         
-        waveform = torch.from_numpy(obs).unsqueeze(1).float()
-        scores, embeddings = self.detector.get_score_and_embedding(waveform)
+        # Prepare waveforms for batch inference
+        # 1. Current observations (for next step or if it just finished)
+        waveforms = [torch.from_numpy(o).unsqueeze(0) for o in obs]
+        # 2. Terminal observations (if an environment was reset by SubprocVecEnv)
+        terminal_map = {} # Maps env_idx to position in waveforms list for terminal obs
+        
+        for i, done in enumerate(dones):
+            if done and "terminal_observation" in infos[i]:
+                term_obs = infos[i]["terminal_observation"]
+                terminal_map[i] = len(waveforms)
+                waveforms.append(torch.from_numpy(term_obs).unsqueeze(0))
+        
+        # Combined batch inference
+        batch_waveform = torch.cat(waveforms, dim=0).unsqueeze(1).float() # [Total, 1, L]
+        scores, embeddings = self.detector.get_score_and_embedding(batch_waveform)
         
         new_rewards = []
         new_dones = []
         
         for i in range(self.num_envs):
-            score = scores[i] # Probability of being classified as 'Bonafide'
-            truncated = infos[i].get('truncated', False) # Check if the episode was truncated by the environment
+            # If the environment finished in the worker, the reward for the STEP 
+            # that just finished must come from the 'terminal_observation'.
+            if i in terminal_map:
+                idx = terminal_map[i]
+                score = scores[idx]
+                # Replace terminal raw audio with embedding to prevent crash in SB3
+                infos[i]["terminal_observation"] = embeddings[idx].cpu().numpy().flatten().astype(np.float32)
+            else:
+                score = scores[i]
             
-            # Extract worker-specific info
+            # Extract worker-specific info for logging
             self.current_worker = infos[i].get('worker_id', 'N/A')
             self.current_seed = infos[i].get('seed', 'N/A')
 
             # Update current_step for logging in reward_logic
             self.current_step = self.total_steps
-            # Compute reward and check for termination
+            # Compute reward and check for termination based on the CORRECT score
             reward, terminated = compute_attack_reward(score, self)
             
             new_rewards.append(reward)
             # SB3 VecEnv handles 'dones' (terminated or truncated)
-            new_dones.append(terminated or truncated)
+            # We add our own 'terminated' condition from the detector
+            new_dones.append(dones[i] or terminated)
             
             # Update info dictionaries with actual detector results
             infos[i]['score'] = float(score)
             infos[i]['reward'] = reward
             infos[i]['terminated'] = terminated
             
-        return embeddings.cpu().numpy(), np.array(new_rewards), np.array(new_dones), infos
+        # Return embeddings of current observations [0:num_envs]
+        return embeddings[:self.num_envs].cpu().numpy(), np.array(new_rewards), np.array(new_dones), infos
