@@ -30,7 +30,7 @@ audio:
 # Model Settings
 model:
   detector_name: "MTUCI/AASIST3"
-  device: "cpu" # Execution hardware: "cuda" (Enforced GPU) or "cpu" (Standard execution)
+  device: "cuda" # Execution hardware: "cuda" (Enforced GPU) or "cpu" (Standard execution)
 
 # Logging & Callbacks
 logging:

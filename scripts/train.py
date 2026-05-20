@@ -119,9 +119,11 @@ def train():
         # 1. Hardware Check: Enforce CUDA if requested
         requested_device = cfg['model'].get('device', 'cpu')
         if requested_device == "cuda" and not torch.cuda.is_available():
-            critical_error = "CRITICAL: CUDA requested but not available. Aborting to prevent inefficient CPU execution."
+            critical_error = "‼️ CRITICAL: CUDA requested but not available. Aborting to prevent inefficient CPU execution."
             logger.error(critical_error)
             raise RuntimeError(critical_error)
+        if requested_device == "cpu":
+            logger.warning("⚠️ WARNING: CPU execution requested. Training will be significantly slower. Ensure this is intentional. (Go to configs/train_config.yaml to change this setting)")
             
         # 2. Initialize the detector wrapper (Centralized for batched GPU inference)
         logger.info(f"Loading {cfg['model']['detector_name']} model for batched inference.")
