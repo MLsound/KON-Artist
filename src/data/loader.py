@@ -34,24 +34,24 @@ def get_asvspoof_loader(split: str = "train", buffer_size: int = 10000, seed: in
     return shuffled_ds
 
 def generator_from_ds(shuffled_ds):
-    """Yields preprocessed tensors (ONLY spoofed) and labels for the RL Env."""
+    """
+    Yields preprocessed tensors (STRICTLY Spoof) and labels for the RL Env.
+    Ensures that Bonafide signals are ignored to comply with categorical exclusion rules.
+    """
     for sample in shuffled_ds:
-        if sample["key"] == 1: # 1 is Bonafide, 0 is Spoof
-            continue # For now, we yield all samples; filtering can be done in the environment if needed
-        else:
-            # Access audio data array and sampling rate from the decoded audio column
-            # audio_data = torch.from_numpy(sample["audio"]["array"]).float().unsqueeze(0)
-            # sr = sample["audio"]["sampling_rate"]
-
-            # Access the raw bytes directly
-            audio_bytes = sample["audio"]["bytes"]
-            label = sample["key"] # 1 for Bonafide, 0 for Spoof
+        # ASVspoof 2019 LA: 1 is Bonafide, 0 is Spoof
+        # MANDATORY: Only yield spoofed signals.
+        if sample["key"] == 1:
+            continue 
             
-            # Load directly into torch tensor (Mono-conversion happens here)
-            waveform, sr = torchaudio.load(io.BytesIO(audio_bytes))
+        # Access the raw bytes directly
+        audio_bytes = sample["audio"]["bytes"]
+        label = sample["key"] # Should be 0 (Spoof)
+        
+        # Load directly into torch tensor (Mono-conversion happens here)
+        waveform, sr = torchaudio.load(io.BytesIO(audio_bytes))
 
-            # Standardize via your existing pipeline
-            # processed = preprocess_audio(audio_data, sr)
-            processed = preprocess_audio(waveform, sr)
+        # Standardize via existing pipeline
+        processed = preprocess_audio(waveform, sr)
 
-            yield processed, label
+        yield processed, label

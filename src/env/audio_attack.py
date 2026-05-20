@@ -169,7 +169,16 @@ class AudioAttackEnv(gym.Env):
 
         try:
             self.current_audio, target_label = next(self.audio_files)
+            
+            # Log the sample label for diagnostic transparency
             logger.info(f"Environment Reset: Loading new sample (Label: {'Bonafide' if target_label == 1 else 'Spoof'})")
+            
+            # SECOND LAYER OF DEFENSE: Assert strict categorical exclusion
+            if target_label == 1: # 1 is Bonafide
+                critical_error = "CRITICAL SECURITY BREACH: Bonafide signal detected in attack pipeline. Aborting to protect human voice integrity."
+                logger.error(critical_error)
+                raise RuntimeError(critical_error)
+                
         except StopIteration:
             # Fallback in case the streaming dataset exhausts
             logger.error("Audio stream exhausted.")
