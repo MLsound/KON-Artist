@@ -13,6 +13,7 @@ import logging
 import warnings
 import sys
 import yaml
+import torch
 from pathlib import Path
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv, VecMonitor
@@ -115,9 +116,16 @@ def train():
     try:
         logger.info("===== Starting KON-Artist Training Session =====")
         
-        # 1. Initialize the detector wrapper (Centralized for batched GPU inference)
+        # 1. Hardware Check: Enforce CUDA if requested
+        requested_device = cfg['model'].get('device', 'cpu')
+        if requested_device == "cuda" and not torch.cuda.is_available():
+            critical_error = "CRITICAL: CUDA requested but not available. Aborting to prevent inefficient CPU execution."
+            logger.error(critical_error)
+            raise RuntimeError(critical_error)
+            
+        # 2. Initialize the detector wrapper (Centralized for batched GPU inference)
         logger.info(f"Loading {cfg['model']['detector_name']} model for batched inference.")
-        detector = AASISTWrapper(cfg['model']['detector_name'], device=cfg['model']['device'])
+        detector = AASISTWrapper(cfg['model']['detector_name'], device=requested_device)
         
         # 2. Initialize Vectorized Environments
         logger.info(f"Instantiating {N_ENVS} parallel environments.")
@@ -152,6 +160,7 @@ def train():
             model = PPO.load(
                 latest_checkpoint, 
                 env=env,
+                device=requested_device,
                 learning_rate=lr_schedule,
                 tensorboard_log=cfg['logging']['tensorboard_log']
             )

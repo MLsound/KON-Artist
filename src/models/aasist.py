@@ -26,10 +26,11 @@ class AASISTWrapper:
     
     def __init__(self, model_path: str, device: str = "cuda"):
         self.device = device
-        # Ensure the device is available; fallback to CPU if necessary
+        # Ensure the device is available; fail fast if CUDA is missing to prevent inefficient CPU execution
         if self.device == "cuda" and not torch.cuda.is_available():
-            logger.warning("CUDA requested but not available. Falling back to CPU.")
-            self.device = "cpu"
+            critical_error = "CRITICAL: CUDA requested for AASIST3 but not available. Aborting session."
+            logger.error(critical_error)
+            raise RuntimeError(critical_error)
             
         self.model = self._load_model(model_path)
         self.model.eval()  # Set to evaluation mode
