@@ -1,25 +1,26 @@
 # KON-Artist Training Configuration
+# Colab 5h limit: 70,560 to 88,200 steps max (17~21 iterations for 4096 n_steps)
 
 # PPO Hyperparameters
 ppo:
-  total_updates: 10
-  n_steps: 4096
-  epochs: 10
-  batch_size: 256
-  clip_range: 0.3
+  total_updates: 20 # Total number of PPO updates (each update processes N_STEPS)
+  n_steps: 4096 # 2048 is PPO's default rollout buffer size; adjust if using a custom buffer implementation
+  epochs: 15 # Number of epochs per PPO update (default is 4 in stable-baselines3)
+  batch_size: 256 # Batch size for PPO updates (default is 64 in stable-baselines3, but can be adjusted based on memory constraints)
+  clip_range: 0.3 # PPO clipping parameter (default is 0.2, but can be adjusted for stability)
   policy: "MlpPolicy"
   verbose: 1
-  learning_rate: 0.0003 # Default PPO value
+  learning_rate: 0.0003 # Learning rate for PPO optimizer (default is 0.0003 in stable-baselines3)
   entropy:
-    initial: 0.01
-    final: 0.001
+    initial: 0.01 # Initial entropy coefficient (encourages exploration)
+    final: 0.001  # Final entropy coefficient (can be decayed over time to encourage exploitation)
 
 # Environment Settings
 env:
   n_envs: -1 # -1 means auto-scale based on CPU cores (All cores - 1)
   seed: 42
-  success_threshold: 0.5
-  step_limit: 10
+  success_threshold: 0.5 # Threshold for considering an episode successful (based on reward)
+  step_limit: 10  # Maximum steps per episode to prevent infinite loops (can be adjusted based on task complexity)
 
 # Audio Data Settings
 audio:
@@ -29,13 +30,13 @@ audio:
 # Model Settings
 model:
   detector_name: "MTUCI/AASIST3"
-  device: "cuda"
+  device: "cpu" # Execution hardware: "cuda" (Enforced GPU) or "cpu" (Standard execution)
 
 # Logging & Callbacks
 logging:
   log_dir: "outputs/"
   tensorboard_log: null # Set to a path if tensorboard is needed
-  reward_log_freq: 1
+  reward_log_freq: 1 # Log rewards every N updates (will be converted to steps in script)
   checkpoint:
     save_freq: 1 # Number of PPO UPDATES between checkpoints (will be converted to steps in script)
     save_path: "outputs/checkpoints/"
