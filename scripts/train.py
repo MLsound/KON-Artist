@@ -101,7 +101,7 @@ def make_env(rank: int, seed: int = 42):
             "buffer_size": cfg['audio']['buffer_size']
         }
         # Worker has NO detector (it's in the VecDetectorWrapper on the main process)
-        env = AudioAttackEnv(detector=None, audio_config=audio_config)
+        env = AudioAttackEnv(detector=None, audio_config=audio_config, bonus=cfg['ppo'].get('bonus', True), bonus_amount=cfg['ppo'].get('bonus_amount', 250.0))
         # Set environment specific thresholds/limits from config
         env.success_threshold = cfg['env']['success_threshold']
         env.step_limit = cfg['env']['step_limit']
@@ -138,7 +138,7 @@ def train():
 
         # 3. Wrap for Batched GPU Inference
         logger.info("Wrapping environment with VecDetectorWrapper for GPU batching.")
-        env = VecDetectorWrapper(env, detector)
+        env = VecDetectorWrapper(env, detector, bonus=cfg['ppo'].get('bonus', True), bonus_amount=cfg['ppo'].get('bonus_amount', 250.0))
         env.total_timesteps = TOTAL_TIMESTEPS
         env.success_threshold = cfg['env']['success_threshold']
         

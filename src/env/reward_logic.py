@@ -56,10 +56,15 @@ def compute_attack_reward(score: float, self: object) -> tuple:
 
     # CONTINUOUS REWARD ACCELERATION
     # Scale continuously with the AASIST3 detector's confidence score to provide a smooth gradient signal.
-    # At score=0.10, bonus is 25.0. At score=0.50, bonus is 125.0. This completely eliminates bimodal jumps.
-    bonus_applied = float(score) * 250.0
-    reward += bonus_applied
-    logger.debug(f"Continuous Bonus (+{bonus_applied:.2f}) applied. Current reward: {reward}")
+    # The multiplier is controlled by the 'bonus_amount' hyperparameter.
+    bonus_enabled = getattr(self, "bonus", True)
+    if bonus_enabled:
+        bonus_amount = getattr(self, "bonus_amount", 250.0)
+        bonus_applied = float(score) * bonus_amount
+        logger.debug(f"Continuous Bonus (+{bonus_applied:.2f}) applied. Current reward: {reward}")
+    else:
+        bonus_applied = 0.0
+        logger.debug("Continuous Bonus disabled in configuration.")
 
     # COMPLETION CRITERIA
     # If the score exceeds a certain threshold, we can consider the episode successful

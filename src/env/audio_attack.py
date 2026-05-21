@@ -24,10 +24,12 @@ class AudioAttackEnv(gym.Env):
     RL Environment for optimizing audio spoofing parameters.
     Supports both direct inference and vectorized batch inference modes.
     """
-    def __init__(self, detector=None, dsp_config: dict = None, audio_config: dict = None, audio_files=None):
+    def __init__(self, detector=None, dsp_config: dict = None, audio_config: dict = None, audio_files=None, bonus: bool = True, bonus_amount: float = 250.0):
         super().__init__()
         self.detector = detector
         self.audio_config = audio_config
+        self.bonus = bonus
+        self.bonus_amount = bonus_amount
         
         # Extract rank and seed for identifying logs per worker
         self.rank = audio_config.get("rank", 0) if audio_config else 0
