@@ -54,7 +54,7 @@ class RewardLoggerCallback(BaseCallback):
                     if all(k in info for k in ["reward", "score", "bonus"]):
                         reward = info["reward"]
                         score = info["score"]
-                        bonus = int(info["bonus"])
+                        bonus = info["bonus"]
                         writer.writerow([self.num_timesteps, reward, score, bonus])
                         
                     # Also log if an episode finished (optional, but 'reward' above covers the terminal reward too)
