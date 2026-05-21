@@ -56,7 +56,6 @@ class DSPPipeline(torch.nn.Module):
         x = x + (x_quant - x).detach()
         
         return x
-
     def apply_spectral_tilt(self, x: torch.Tensor, tilt_db_per_octave: float, pivot_freq: float = 1000.0) -> torch.Tensor:
         """
         Applies a spectral tilt pivoting around pivot_freq.
@@ -66,6 +65,7 @@ class DSPPipeline(torch.nn.Module):
         if tilt_db_per_octave == 0:
             return x
             
+        # x: (C, L) or (B, C, L)
         original_shape = x.shape
         length = x.shape[-1]
         
@@ -76,11 +76,14 @@ class DSPPipeline(torch.nn.Module):
         # Frequencies corresponding to FFT bins
         freqs = torch.linspace(0, self.sr / 2, n_freq, device=x.device)
         
-        # Gain calculation: Gain_dB = slope * log2(f / f_pivot)
+        # Gain calculation: 
+        # Gain_dB = slope * log2(f / f_pivot)
+        # We use a small epsilon for f=0 to avoid log(0)
         gain_db = tilt_db_per_octave * torch.log2((freqs + 1e-6) / pivot_freq)
         gain = 10 ** (gain_db / 20)
         
         # Apply gain to the complex spectrum
+        # Ensure gain is broadcastable over batch/channels
         x_fft_tilted = x_fft * gain
         
         # Inverse FFT to return to time domain
@@ -101,22 +104,28 @@ class DSPPipeline(torch.nn.Module):
             return x
             
         original_shape = x.shape
+        # Ensure x is (Batch, Channels, Length) for grid_sample logic
         if x.dim() == 2:
-            x = x.unsqueeze(0)
+            x = x.unsqueeze(0) # Add batch dimension
             
         batch, channels, length = x.shape
         
+        # Stochastic displacement: delta ~ Uniform(-jitter_level, jitter_level)
+        # Scaled to micro-variations (max shift of 2 samples)
         max_shift = 2.0 
         displacement = (torch.rand(batch, 1, length, device=x.device) * 2 - 1) * jitter_level * max_shift
         
+        # Create a time grid and apply displacement
         indices = torch.linspace(0, length - 1, length, device=x.device).repeat(batch, 1, 1)
         new_indices = indices + displacement
         
+        # Normalize to [-1, 1] range for grid_sample
         normalized_indices = (new_indices / (length - 1)) * 2 - 1
         
+        # Prepare 4D input (N, C, 1, L) and 4D grid (N, 1, L, 2) for grid_sample
         x_4d = x.unsqueeze(2) 
         y_coords = torch.zeros_like(normalized_indices)
-        v_grid = torch.stack([normalized_indices, y_coords], dim=-1)
+        v_grid = torch.stack([normalized_indices, y_coords], dim=-1) # (N, 1, L, 2)
         
         x_jittered = torch.nn.functional.grid_sample(
             x_4d, 
@@ -141,6 +150,7 @@ class DSPPipeline(torch.nn.Module):
             x = x * (1 + noise)
             
         if jitter_level > 0:
+            # Refined from additive noise to true temporal displacement
             x = self.apply_jitter(x, jitter_level)
 
         return x
