@@ -58,12 +58,14 @@ def compute_attack_reward(score: float, self: object) -> tuple:
     # Stage 1: Intermediate Directional Signal (10% milestone)
     if score > 0.10:
         reward += 25.0
+        bonus_applied = 25.0
         logger.debug(f"Stage 1 Bonus (+25) applied. Current reward: {reward}")
 
     # Stage 2: Ultimate Evasion Objective (Definitive bypass threshold)
     if score > 0.50:
         reward += 100.0
         logger.info(f"--- ATTACK SUCCESSFUL (Stage 2): Score {score:.4f} ---")
+        bonus_applied = 100.0
         logger.debug(f"Stage 2 Bonus (+100) applied. Current reward: {reward}")
 
     # COMPLETION CRITERIA
@@ -74,4 +76,4 @@ def compute_attack_reward(score: float, self: object) -> tuple:
     # Only logs specific step info if running in single-env mode
     logger.info(f"Worker {worker_id} | Step {step_str} | DSP: {last_params} | Score: {score:.4f} | Reward: {reward:.2f}")
 
-    return reward, terminated
+    return reward, terminated, bonus_applied

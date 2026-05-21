@@ -81,7 +81,7 @@ class VecDetectorWrapper(VecEnvWrapper):
             # Update current_step for logging in reward_logic
             self.current_step = self.total_steps
             # Compute reward and check for termination based on the CORRECT score
-            reward, terminated = compute_attack_reward(score, self)
+            reward, terminated, bonus = compute_attack_reward(score, self)
             
             new_rewards.append(reward)
             # SB3 VecEnv handles 'dones' (terminated or truncated)
@@ -91,6 +91,7 @@ class VecDetectorWrapper(VecEnvWrapper):
             # Update info dictionaries with actual detector results
             infos[i]['score'] = float(score)
             infos[i]['reward'] = reward
+            infos[i]['bonus'] = bonus
             infos[i]['terminated'] = terminated
             
         # Return embeddings of current observations [0:num_envs]

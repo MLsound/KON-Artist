@@ -36,12 +36,12 @@ class RewardLoggerCallback(BaseCallback):
         """Initialize the CSV file with headers at the start of training."""
         with open(self.save_path, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['step', 'reward'])
-        logger.info(f"Reward logging started at: {self.save_path}")
+            writer.writerow(['step', 'reward', 'score', 'bonus'])
+        logger.info(f"Reward, Score and Bonus logging started at: {self.save_path}")
 
     def _on_step(self) -> bool:
         """
-        Log rewards for every step by inspecting environment 'infos'.
+        Log rewards, scores and bonuses for every step by inspecting environment 'infos'.
         """
         # Retrieve 'infos' from local variables (available during collect_rollouts)
         infos = self.locals.get("infos")
@@ -50,10 +50,12 @@ class RewardLoggerCallback(BaseCallback):
             with open(self.save_path, 'a', newline='') as f:
                 writer = csv.writer(f)
                 for info in infos:
-                    # 'reward' is added to 'info' by our VecDetectorWrapper in every step
-                    if "reward" in info:
+                    # 'reward', 'score' and 'bonus' are added to 'info' by our VecDetectorWrapper in every step
+                    if all(k in info for k in ["reward", "score", "bonus"]):
                         reward = info["reward"]
-                        writer.writerow([self.num_timesteps, reward])
+                        score = info["score"]
+                        bonus = int(info["bonus"])
+                        writer.writerow([self.num_timesteps, reward, score, bonus])
                         
                     # Also log if an episode finished (optional, but 'reward' above covers the terminal reward too)
                     if self.verbose > 1 and "episode" in info:

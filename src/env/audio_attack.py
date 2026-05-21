@@ -130,12 +130,13 @@ class AudioAttackEnv(gym.Env):
         obs = self._get_obs(embedding) # Observation: The embedding from AASIST3 (160-dim)
                 
         # 3. Compute reward and check for termination
-        reward, terminated = compute_attack_reward(score, self) # Centralized call ensures logic parity with non-vectorized env
+        reward, terminated, bonus = compute_attack_reward(score, self) # Centralized call ensures logic parity with non-vectorized env
 
         # Collect info for logging and analysis
         info = {
             'score': float(score),
             'reward': reward,
+            'bonus': int(bonus),
             'dsp_params': self.last_dsp_params,
             'terminated': terminated,
             'truncated': truncated,
