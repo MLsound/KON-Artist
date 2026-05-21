@@ -5,15 +5,15 @@
 ppo:
   total_updates: 20 # Total number of PPO updates (each update processes N_STEPS)
   n_steps: 4096 # 2048 is PPO's default rollout buffer size; adjust if using a custom buffer implementation
-  epochs: 15 # Number of epochs per PPO update (default is 4 in stable-baselines3)
+  epochs: 8 # Number of epochs per PPO update (default is 4 in stable-baselines3)
   batch_size: 256 # Batch size for PPO updates (default is 64 in stable-baselines3, but can be adjusted based on memory constraints)
-  clip_range: 0.3 # PPO clipping parameter (default is 0.2, but can be adjusted for stability)
+  clip_range: 0.15 # PPO clipping parameter (default is 0.2, but can be adjusted for stability)
+  learning_rate: 0.0001 # Learning rate for PPO optimizer (default is 0.0003 in stable-baselines3)
+  entropy:
+    initial: 0.05 # Initial entropy coefficient (encourages exploration)
+    final: 0.01  # Final entropy coefficient (can be decayed over time to encourage exploitation)
   policy: "MlpPolicy"
   verbose: 1
-  learning_rate: 0.0003 # Learning rate for PPO optimizer (default is 0.0003 in stable-baselines3)
-  entropy:
-    initial: 0.01 # Initial entropy coefficient (encourages exploration)
-    final: 0.001  # Final entropy coefficient (can be decayed over time to encourage exploitation)
 
 # Environment Settings
 env:
