@@ -187,11 +187,14 @@ class AudioAttackEnv(gym.Env):
         
         if self.detector is None:
             # Return raw audio for initial observation
+            info.update({'label': target_label})
             return self._get_obs(self.current_audio), info
 
         # Initial inference
-        _, embeddings = self.detector.get_score_and_embedding(self.current_audio)
+        scores, embeddings = self.detector.get_score_and_embedding(self.current_audio)
+        score = scores[0]
         obs = self._get_obs(embeddings[0]) # Observation: The embedding from AASIST3 (160-dim)
 
+        info.update({'score': float(score), 'label': target_label})
         return obs, info
     

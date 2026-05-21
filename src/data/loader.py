@@ -55,3 +55,14 @@ def generator_from_ds(shuffled_ds):
         processed = preprocess_audio(waveform, sr)
 
         yield processed, label
+
+def eval_generator(shuffled_ds):
+    """Yields all samples (Bonafide and Spoof) for evaluation."""
+    for sample in shuffled_ds:
+        audio_bytes = sample["audio"]["bytes"]
+        label = sample["key"] # 1 for Bonafide, 0 for Spoof
+
+        waveform, sr = torchaudio.load(io.BytesIO(audio_bytes))
+        processed = preprocess_audio(waveform, sr)
+
+        yield processed, label
