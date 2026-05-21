@@ -54,26 +54,22 @@ def compute_attack_reward(score: float, self: object) -> tuple:
     reward += vertical_shift # shift it so the minimum expected log (-25) becomes 0
     logger.debug(f"Shifted Log Reward: {reward}") # Debugging statement to trace shifted reward calculation
 
-    # TWO-STAGE PROGRESSIVE REWARD ACCELERATION
-    # Stage 1: Intermediate Directional Signal (10% milestone)
-    if score > 0.10:
-        reward += 25.0
-        bonus_applied = 25.0
-        logger.debug(f"Stage 1 Bonus (+25) applied. Current reward: {reward}")
-
-    # Stage 2: Ultimate Evasion Objective (Definitive bypass threshold)
-    if score > 0.50:
-        reward += 100.0
-        logger.info(f"--- ATTACK SUCCESSFUL (Stage 2): Score {score:.4f} ---")
-        bonus_applied = 100.0
-        logger.debug(f"Stage 2 Bonus (+100) applied. Current reward: {reward}")
+    # CONTINUOUS REWARD ACCELERATION
+    # Scale continuously with the AASIST3 detector's confidence score to provide a smooth gradient signal.
+    # At score=0.10, bonus is 25.0. At score=0.50, bonus is 125.0. This completely eliminates bimodal jumps.
+    bonus_applied = float(score) * 250.0
+    reward += bonus_applied
+    logger.debug(f"Continuous Bonus (+{bonus_applied:.2f}) applied. Current reward: {reward}")
 
     # COMPLETION CRITERIA
     # If the score exceeds a certain threshold, we can consider the episode successful
     terminated = bool(score > success_threshold) # Logic for completion (Agent successfully spoofed the detector)
+    
+    if terminated:
+        logger.info(f"--- ATTACK SUCCESSFUL: Score {score:.4f} ---")
         
     # Telemetry Logging
     # Only logs specific step info if running in single-env mode
-    logger.info(f"Worker {worker_id} | Step {step_str} | DSP: {last_params} | Score: {score:.4f} | Reward: {reward:.2f}")
+    logger.info(f"Worker {worker_id} | Step {step_str} | DSP: {last_params} | Score: {score:.4f} | Reward: {reward:.2f} | Bonus: {bonus_applied:.2f}")
 
     return reward, terminated, bonus_applied
