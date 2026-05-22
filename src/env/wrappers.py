@@ -82,8 +82,11 @@ class VecDetectorWrapper(VecEnvWrapper):
 
             # Update current_step for logging in reward_logic
             self.current_step = self.total_steps
+            # Extract DSP parameters used in this worker's step
+            dsp_params = infos[i].get('dsp_params', None)
+            
             # Compute reward and check for termination based on the CORRECT score
-            reward, terminated, bonus = compute_attack_reward(score, self)
+            reward, terminated, bonus = compute_attack_reward(score, self, dsp_params=dsp_params)
             
             new_rewards.append(reward)
             # SB3 VecEnv handles 'dones' (terminated or truncated)

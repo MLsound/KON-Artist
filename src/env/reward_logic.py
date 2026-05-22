@@ -15,7 +15,7 @@ logger = get_logger(name=__file__,
                     log_file="outputs/train_session.log",
                     level=logging.INFO)  # Set to DEBUG for detailed trace during environment interactions
 
-def compute_attack_reward(score: float, self: object) -> tuple:
+def compute_attack_reward(score: float, self: object, dsp_params: dict = None) -> tuple:
     """
     Standardized reward and termination logic for KON-Artist.
     Ensures consistency between single-env and vectorized modes.
@@ -23,6 +23,7 @@ def compute_attack_reward(score: float, self: object) -> tuple:
     Args:
         score (float): The probability of the attack being classified as 'Bonafide'.
         self (object): The environment instance (AudioAttackEnv or VecDetectorWrapper) to access thresholds and logging.
+        dsp_params (dict, optional): The DSP configurations used in the current step.
 
     Returns:
         reward (float): The computed reward for the current step.
@@ -32,7 +33,10 @@ def compute_attack_reward(score: float, self: object) -> tuple:
     success_threshold = getattr(self, "success_threshold", 0.5)
     current_step = getattr(self, "current_step", "N/A")
     total_timesteps = getattr(self, "total_timesteps", None)
-    last_params = getattr(self, "last_dsp_params", "Batched")
+    
+    # Use provided dsp_params, fallback to environment attribute, then to "Batched"
+    last_params = dsp_params or getattr(self, "last_dsp_params", "Batched")
+    
     worker_id = getattr(self, "current_worker", "N/A")
     seed = getattr(self, "current_seed", "N/A")
     
