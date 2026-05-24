@@ -14,6 +14,7 @@ import warnings
 import sys
 import yaml
 import torch
+import time
 from pathlib import Path
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv, VecMonitor
@@ -127,6 +128,12 @@ def train():
             
         # 2. Initialize the detector wrapper (Centralized for batched GPU inference)
         logger.info(f"Loading {cfg['model']['detector_name']} model for batched inference.")
+        
+        # Log Bonus Configuration
+        bonus_enabled = cfg['ppo'].get('bonus', True)
+        bonus_amount = cfg['ppo'].get('bonus_amount', 250.0)
+        logger.info(f"Bonus Reward: {f'ENABLED (Amount: {bonus_amount})' if bonus_enabled else '❕DISABLED'}")
+
         detector = AASISTWrapper(cfg['model']['detector_name'], device=requested_device)
         
         # 2. Initialize Vectorized Environments
@@ -214,14 +221,25 @@ def train():
         )
         
         # 6. Training Execution
+        estimated_time_s = TOTAL_TIMESTEPS * cfg['logging'].get('time_per_step', 0.0)
+        hours, remainder = divmod(estimated_time_s, 3600)
+        minutes, seconds = divmod(remainder, 60)
+        logger.info(f"⌛️ Estimated total training time: {int(hours)}h {int(minutes)}m {int(seconds)}s (based on {cfg['logging'].get('time_per_step', 0.0)}s/step)")
+
         logger.info(f"Beginning training: TOTAL_TIMESTEPS={TOTAL_TIMESTEPS}, BATCH_TOTAL={TOTAL_ROLLOUT_BUFFER}")
+        start_time = time.time()
         model.learn(
             total_timesteps=TOTAL_TIMESTEPS,
             callback=[reward_callback, wandb_callback, checkpoint_callback, entropy_callback, lr_callback],
             reset_num_timesteps=False if latest_checkpoint else True
         )
+        end_time = time.time()
+
+        total_duration = end_time - start_time
+        actual_time_per_step = total_duration / TOTAL_TIMESTEPS
+        logger.info(f"Training finished. Actual average processing time: {actual_time_per_step:.5f}s/step")
         
-        logger.info("Training finished. Saving model.")
+        logger.info("Saving model.")
         model_path = os.path.join(cfg['logging']['log_dir'], "kon_artist_agent")
         model.save(model_path)
 

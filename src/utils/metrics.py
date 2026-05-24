@@ -35,4 +35,41 @@ def compute_eer(bonafide_scores: np.ndarray, spoof_scores: np.ndarray):
     eer = (fpr[idx] + fnr[idx]) / 2
     eer_threshold = thresholds[idx]
     
-    return eer, eer_threshold
+    return eer, fpr, fnr, thresholds
+
+def compute_mindcf(frr: np.ndarray, far: np.ndarray, thresholds: np.ndarray, 
+                  Pspoof: float = 0.05, Cmiss: float = 1.0, Cfa: float = 10.0):
+    """
+    Calculates the Minimum Detection Cost Function (min DCF).
+    Commonly used in ASVspoof as a secondary metric to EER.
+    """
+    min_c_det = float("inf")
+    min_c_det_threshold = thresholds[0]
+
+    p_target = 1 - Pspoof
+    for i in range(len(frr)):
+        # Weighted sum of false negative and false positive errors
+        c_det = Cmiss * frr[i] * p_target + Cfa * far[i] * (1 - p_target)
+        if c_det < min_c_det:
+            min_c_det = c_det
+            min_c_det_threshold = thresholds[i]
+            
+    # Normalize the cost
+    c_def = min(Cmiss * p_target, Cfa * (1 - p_target))
+    min_dcf = min_c_det / c_def
+    
+    return min_dcf, min_c_det_threshold
+
+def calculate_cllr(bonafide_scores: np.ndarray, spoof_scores: np.ndarray):
+    """
+    Calculates the Cost of Log-Likelihood Ratio (CLLR).
+    Measures the well-calibratedness of the detector scores.
+    """
+    def negative_log_sigmoid(lodds):
+        return np.log1p(np.exp(-lodds))
+
+    # Calculate the CLLR value
+    cllr = 0.5 * (np.mean(negative_log_sigmoid(bonafide_scores)) + \
+                  np.mean(negative_log_sigmoid(-spoof_scores))) / np.log(2)
+
+    return cllr

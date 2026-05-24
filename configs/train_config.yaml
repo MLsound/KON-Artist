@@ -39,6 +39,7 @@ logging:
   log_dir: "outputs/"
   tensorboard_log: null # Set to a path if tensorboard is needed
   reward_log_freq: 1 # Log rewards every N updates (will be converted to steps in script)
+  time_per_step: 0.16538 # Average time per step in seconds for estimation
   checkpoint:
     save_freq: 1 # Number of PPO UPDATES between checkpoints (will be converted to steps in script)
     save_path: "outputs/checkpoints/"
