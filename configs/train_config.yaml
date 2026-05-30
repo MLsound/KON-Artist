@@ -12,7 +12,7 @@ ppo:
   entropy:
     initial: 0.05 # Initial entropy coefficient (encourages exploration)
     final: 0.01  # Final entropy coefficient (can be decayed over time to encourage exploitation)
-  bonus: False # Whether to use a reward bonus for successful episodes (can be adjusted based on task requirements)
+  bonus: True # Whether to use a reward bonus for successful episodes (can be adjusted based on task requirements)
   bonus_amount: 50.0 # Multiplier for the continuous reward bonus
   policy: "MlpPolicy"
   verbose: 1

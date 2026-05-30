@@ -65,6 +65,7 @@ def compute_attack_reward(score: float, self: object, dsp_params: dict = None) -
     if bonus_enabled:
         bonus_amount = getattr(self, "bonus_amount", 250.0)
         bonus_applied = float(score) * bonus_amount
+        reward += bonus_applied
         logger.debug(f"Continuous Bonus (+{bonus_applied:.2f}) applied. Current reward: {reward}")
     else:
         bonus_applied = 0.0

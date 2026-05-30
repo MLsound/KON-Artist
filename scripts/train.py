@@ -231,7 +231,7 @@ def train():
         model.learn(
             total_timesteps=TOTAL_TIMESTEPS,
             callback=[reward_callback, wandb_callback, checkpoint_callback, entropy_callback, lr_callback],
-            reset_num_timesteps=False if latest_checkpoint else True
+            reset_num_timesteps=True
         )
         end_time = time.time()
 
