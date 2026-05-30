@@ -36,20 +36,44 @@ class RewardLoggerCallback(BaseCallback):
         """Initialize the CSV file with headers at the start of training."""
         with open(self.save_path, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['step', 'reward'])
-        logger.info(f"Reward logging started at: {self.save_path}")
+            writer.writerow(['step', 'reward', 'score', 'bonus', 'dsp_jitter', 'dsp_shimmer', 'dsp_tilt', 'dsp_harmonics', 'dsp_threshold', 'dsp_ratio', 'dsp_bitrate'])
+        logger.info(f"Reward, Score, Bonus and DSP logging started at: {self.save_path}")
 
     def _on_step(self) -> bool:
         """
-        Log episodic rewards from the model buffer.
+        Log rewards, scores, bonuses and DSP parameters for every step by inspecting environment 'infos'.
         """
-        if self.n_calls % self.check_freq == 0:
-            # Extract the last reward if available in the environment buffer
-            if len(self.model.ep_info_buffer) > 0:
-                last_reward = self.model.ep_info_buffer[-1]['r']
-                with open(self.save_path, 'a', newline='') as f:
-                    writer = csv.writer(f)
-                    writer.writerow([self.num_timesteps, last_reward])
+        # Retrieve 'infos' from local variables (available during collect_rollouts)
+        infos = self.locals.get("infos")
+        if infos is not None:
+            # We use 'a' (append) mode to add to the existing file
+            with open(self.save_path, 'a', newline='') as f:
+                writer = csv.writer(f)
+                for info in infos:
+                    # 'reward', 'score' and 'bonus' are added to 'info' by our VecDetectorWrapper in every step
+                    if all(k in info for k in ["reward", "score", "bonus"]):
+                        reward = info["reward"]
+                        score = info["score"]
+                        bonus = info["bonus"]
+                        dsp = info.get("dsp_params", {})
+                        
+                        writer.writerow([
+                            self.num_timesteps, 
+                            reward, 
+                            score, 
+                            bonus,
+                            dsp.get("jitter", ""),
+                            dsp.get("shimmer", ""),
+                            dsp.get("tilt", ""),
+                            dsp.get("harmonics", ""),
+                            dsp.get("threshold", ""),
+                            dsp.get("ratio", ""),
+                            dsp.get("bitrate", "")
+                        ])
+                        
+                    # Also log if an episode finished (optional, but 'reward' above covers the terminal reward too)
+                    if self.verbose > 1 and "episode" in info:
+                        logger.info(f"Step {self.num_timesteps}: Episode finished with reward: {info['episode']['r']:.2f}")
             
         return True
 
