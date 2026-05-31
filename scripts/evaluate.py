@@ -85,26 +85,37 @@ def run_evaluation(model_path, num_samples=500):
     
     env = AudioAttackEnv(detector=detector, dsp_config={}, audio_files=[])
 
-    logger.info(f"Processing {num_samples} samples...")
+    logger.info(f"Processing up to {num_samples} balanced samples...")
     
-    count = 0
-    success_count = 0
+    bonafide_target = num_samples // 2
+    spoof_target = num_samples - bonafide_target
+    
+    bonafide_count = 0
     spoof_count = 0
+    success_count = 0
     
     for audio, label in test_gen:
-        if count >= num_samples:
+        if bonafide_count >= bonafide_target and spoof_count >= spoof_target:
             break
             
         if label == 1:
+            if bonafide_count >= bonafide_target:
+                continue
             scores, _ = detector.get_score_and_embedding(audio)
             bonafide_scores.append(scores[0])
+            bonafide_count += 1
         else:
+            if spoof_count >= spoof_target:
+                continue
             spoof_count += 1
+            
+            # Baseline score for the spoof sample
             scores, _ = detector.get_score_and_embedding(audio)
             baseline_score = scores[0]
             baseline_spoof_scores.append(baseline_score)
             
             if agent is not None:
+                # 1. Rollout with the agent to find optimized parameters
                 env.current_audio = audio
                 env.current_step = 0
                 _, embeddings = detector.get_score_and_embedding(audio)
@@ -112,12 +123,24 @@ def run_evaluation(model_path, num_samples=500):
                 
                 terminated = False
                 truncated = False
-                final_score = baseline_score
+                last_info = {'score': baseline_score, 'dsp_params': {
+                    'jitter': 0, 'shimmer': 0, 'tilt': 0, 'harmonics': 0, 
+                    'threshold': -40, 'ratio': 1, 'bitrate': 128000
+                }}
                 
                 while not (terminated or truncated):
                     action, _ = agent.predict(obs, deterministic=True)
                     obs, reward, terminated, truncated, info = env.step(action)
-                    final_score = info['score']
+                    last_info = info
+                
+                # 2. Explicitly apply the final DSP configuration and evaluate
+                # This ensures we are testing the EXACT final waveform the agent produced
+                final_params = last_info['dsp_params']
+                adv_audio = env.dsp(audio, final_params)
+                
+                # Final evaluation of the modified waveform
+                adv_scores, _ = detector.get_score_and_embedding(adv_audio)
+                final_score = float(adv_scores[0])
                 
                 adversarial_spoof_scores.append(final_score)
                 if final_score > 0.5:
@@ -125,15 +148,15 @@ def run_evaluation(model_path, num_samples=500):
             else:
                 adversarial_spoof_scores.append(baseline_score)
 
-        count += 1
-        if count % 50 == 0:
-            logger.info(f"Progress: {count}/{num_samples}")
+        processed_total = bonafide_count + spoof_count
+        if processed_total % 10 == 0:
+            logger.info(f"Progress: {processed_total}/{num_samples} (B: {bonafide_count}, S: {spoof_count})")
 
     # 6. Compute Metrics
     logger.info("Computing metrics...")
     
     if len(bonafide_scores) == 0 or spoof_count == 0:
-        logger.error("Missing classes in evaluated samples. EER cannot be computed.")
+        logger.error(f"Missing classes in evaluated samples (Bonafide: {len(bonafide_scores)}, Spoof: {spoof_count}). EER cannot be computed.")
         return
 
     bonafide_scores = np.array(bonafide_scores)
@@ -151,9 +174,10 @@ def run_evaluation(model_path, num_samples=500):
     asr = (success_count / spoof_count) * 100 if spoof_count > 0 else 0
     
     # 7. Report Generation
+    total_processed = bonafide_count + spoof_count
     results = {
-        "samples": count,
-        "bonafide_count": len(bonafide_scores),
+        "samples": total_processed,
+        "bonafide_count": bonafide_count,
         "spoof_count": spoof_count,
         "baseline": {
             "eer": float(base_eer),
@@ -177,7 +201,7 @@ def run_evaluation(model_path, num_samples=500):
     print("\n" + "="*40)
     print("KON-ARTIST EVALUATION REPORT")
     print("="*40)
-    print(f"Samples Evaluated: {count} (Bonafide: {len(bonafide_scores)}, Spoof: {spoof_count})")
+    print(f"Samples Evaluated: {total_processed} (Bonafide: {bonafide_count}, Spoof: {spoof_count})")
     print("-" * 40)
     print(f"Baseline EER:      {base_eer*100:.4f}%")
     print(f"Baseline min t-DCF: {base_min_tdcf:.4f}")
