@@ -69,6 +69,9 @@ def calculate_cllr(bonafide_scores: np.ndarray, spoof_scores: np.ndarray):
         return np.log1p(np.exp(-lodds))
 
     # Calculate the CLLR value
+    # Note: ASVspoof scores are often log-likelihoods or similar.
+    # If they are probabilities, we should convert them to log-odds.
+    # Here we assume they are calibrated scores where higher = more bonafide.
     cllr = 0.5 * (np.mean(negative_log_sigmoid(bonafide_scores)) + \
                   np.mean(negative_log_sigmoid(-spoof_scores))) / np.log(2)
 
