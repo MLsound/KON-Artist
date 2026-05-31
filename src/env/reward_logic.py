@@ -80,6 +80,6 @@ def compute_attack_reward(score: float, self: object, dsp_params: dict = None) -
         
     # Telemetry Logging
     # Only logs specific step info if running in single-env mode
-    logger.info(f"Worker {worker_id} | Step {step_str} | DSP: {last_params} | Score: {score:.4f} | Reward: {reward:.2f} | Bonus: {bonus_applied:.2f}")
+    logger.info(f"Worker {worker_id} | Step {step_str} | Score: {score:.4f} | Reward: {reward:.2f} | Bonus: {bonus_applied:.2f} | DSP: {last_params} ")
 
     return reward, terminated, bonus_applied
