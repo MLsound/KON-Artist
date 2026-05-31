@@ -116,11 +116,11 @@ class AASISTWrapper:
             embedding = self._embedding
 
             # 4. Convert logits to Bonafide probability
-            # AASIST3 outputs [Bonafide, Spoof]
+            # AASIST3 typically outputs [Spoof, Bonafide]
             probabilities = F.softmax(logits, dim=1)
             
-            # Extract the probability for the Bonafide class (index 0) for all samples in batch
+            # Extract the probability for the Bonafide class (index 1) for all samples in batch
             # Returns a 1D numpy array of scores
-            scores = probabilities[:, 0].cpu().numpy()
+            scores = probabilities[:, 1].cpu().numpy()
                 
             return scores, embedding
