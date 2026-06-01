@@ -3,7 +3,7 @@
 
 # PPO Hyperparameters
 ppo:
-  total_updates: 50 # Total number of PPO updates (each update processes N_STEPS)
+  total_updates: 15 # Total number of PPO updates (each update processes N_STEPS)
   n_steps: 4096 # 2048 is PPO's default rollout buffer size; adjust if using a custom buffer implementation
   epochs: 15 # Number of epochs per PPO update (default is 4 in stable-baselines3)
   batch_size: 256 # Batch size for PPO updates (default is 64 in stable-baselines3, but can be adjusted based on memory constraints)
@@ -14,6 +14,10 @@ ppo:
     final: 0.005  # Final entropy coefficient (can be decayed over time to encourage exploitation)
   bonus: True # Whether to use a reward bonus for successful episodes (can be adjusted based on task requirements)
   bonus_amount: 50.0 # Multiplier for the continuous reward bonus
+  biasing:
+    enabled: True
+    # [jitter, shimmer, tilt, harmonics, threshold, ratio, bitrate]
+    target_signature: [-0.8, -0.8, -0.5, 0.0, 0.0, 1.0, 1.0]
   policy: "MlpPolicy"
   verbose: 1
 
