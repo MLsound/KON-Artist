@@ -89,7 +89,7 @@ BATCH_SIZE = min(cfg['ppo']['batch_size'], TOTAL_ROLLOUT_BUFFER) # Ensure batch 
 # Log the actual training configuration for transparency and debugging
 logger.info(f"PPO Configuration: RolloutBuffer={TOTAL_ROLLOUT_BUFFER}, MiniBatch={BATCH_SIZE}, TotalSteps={TOTAL_TIMESTEPS}")
 
-def make_env(rank: int, seed: int = 42):
+def make_env(rank: int, seed: int = 42, completed_steps: int = 0):
     """
     Utility function for multiprocessed env.
     """
@@ -102,7 +102,13 @@ def make_env(rank: int, seed: int = 42):
             "buffer_size": cfg['audio']['buffer_size']
         }
         # Worker has NO detector (it's in the VecDetectorWrapper on the main process)
-        env = AudioAttackEnv(detector=None, audio_config=audio_config, bonus=cfg['ppo'].get('bonus', True), bonus_amount=cfg['ppo'].get('bonus_amount', 250.0))
+        env = AudioAttackEnv(
+            detector=None, 
+            audio_config=audio_config, 
+            bonus=cfg['ppo'].get('bonus', True), 
+            bonus_amount=cfg['ppo'].get('bonus_amount', 250.0),
+            completed_steps=completed_steps
+        )
         # Set environment specific thresholds/limits from config
         env.success_threshold = cfg['env']['success_threshold']
         env.step_limit = cfg['env']['step_limit']
@@ -136,16 +142,41 @@ def train():
 
         detector = AASISTWrapper(cfg['model']['detector_name'], device=requested_device)
         
+        # CHECKPOINT DETECTION (Moved early to inform wrappers/logic)
+        checkpoint_cfg = cfg['logging'].get('checkpoint', {})
+        latest_checkpoint = None
+        completed_steps = 0
+        if checkpoint_cfg.get('load_last', False):
+            latest_checkpoint = get_latest_checkpoint(checkpoint_cfg.get('save_path', "outputs/checkpoints/"))
+            if latest_checkpoint:
+                try:
+                    filename = os.path.basename(latest_checkpoint)
+                    completed_steps = int(filename.split('_')[-2])
+                    logger.info(f"Checkpoint detected: {completed_steps} steps already completed.")
+                except (ValueError, IndexError):
+                    logger.warning("Could not extract step count from checkpoint. Starting from 0.")
+        
         # 2. Initialize Vectorized Environments
         logger.info(f"Instantiating {N_ENVS} parallel environments.")
         if N_ENVS > 1:
-            env = SubprocVecEnv([make_env(i, cfg['env']['seed']) for i in range(N_ENVS)])
+            env = SubprocVecEnv([make_env(i, cfg['env']['seed'], completed_steps) for i in range(N_ENVS)])
         else:
-            env = DummyVecEnv([make_env(0, cfg['env']['seed'])])
+            env = DummyVecEnv([make_env(0, cfg['env']['seed'], completed_steps)])
 
         # 3. Wrap for Batched GPU Inference
         logger.info("Wrapping environment with VecDetectorWrapper for GPU batching.")
-        env = VecDetectorWrapper(env, detector, bonus=cfg['ppo'].get('bonus', True), bonus_amount=cfg['ppo'].get('bonus_amount', 250.0))
+        
+        pending_timesteps = TOTAL_TIMESTEPS - completed_steps
+        cfg['ppo']['pending_timesteps'] = pending_timesteps
+        cfg['ppo']['completed_steps'] = completed_steps
+
+        env = VecDetectorWrapper(
+            env, 
+            detector, 
+            bonus=cfg['ppo'].get('bonus', True), 
+            bonus_amount=cfg['ppo'].get('bonus_amount', 250.0),
+            config=cfg
+        )
         env.total_timesteps = TOTAL_TIMESTEPS
         env.success_threshold = cfg['env']['success_threshold']
         
@@ -156,11 +187,6 @@ def train():
         # 5. Agent Instantiation
         logger.info("Configuring PPO agent.")
         
-        checkpoint_cfg = cfg['logging'].get('checkpoint', {})
-        latest_checkpoint = None
-        if checkpoint_cfg.get('load_last', False):
-            latest_checkpoint = get_latest_checkpoint(checkpoint_cfg.get('save_path', "outputs/checkpoints/"))
-            
         # Initialize learning rate schedule
         lr_schedule = linear_schedule(cfg['ppo']['learning_rate'])
 
@@ -221,22 +247,33 @@ def train():
         )
         
         # 6. Training Execution
-        estimated_time_s = TOTAL_TIMESTEPS * cfg['logging'].get('time_per_step', 0.0)
+        pending_timesteps = TOTAL_TIMESTEPS - completed_steps
+        if pending_timesteps <= 0:
+            logger.info(f"‼️ Target steps ({TOTAL_TIMESTEPS}) reached or exceeded by checkpoint ({completed_steps}). Training complete.")
+            return
+
+        estimated_time_s = pending_timesteps * cfg['logging'].get('time_per_step', 0.0)
         hours, remainder = divmod(estimated_time_s, 3600)
         minutes, seconds = divmod(remainder, 60)
-        logger.info(f"⌛️ Estimated total training time: {int(hours)}h {int(minutes)}m {int(seconds)}s (based on {cfg['logging'].get('time_per_step', 0.0)}s/step)")
-
-        logger.info(f"Beginning training: TOTAL_TIMESTEPS={TOTAL_TIMESTEPS}, BATCH_TOTAL={TOTAL_ROLLOUT_BUFFER}")
+        
+        # Log estimated time based on pending steps to provide a realistic expectation for training duration, especially when resuming from checkpoints.
+        if pending_timesteps == TOTAL_TIMESTEPS:
+            logger.info(f"⌛️ Estimated total training time: {int(hours)}h {int(minutes)}m {int(seconds)}s (based on {cfg['logging'].get('time_per_step', 0.0)}s/step)")
+            logger.info(f"Beginning training: TOTAL_TIMESTEPS={TOTAL_TIMESTEPS}, BATCH_TOTAL={TOTAL_ROLLOUT_BUFFER}")
+        else:
+            logger.info(f"⌛️ Estimated PENDING training time: {int(hours)}h {int(minutes)}m {int(seconds)}s (based on {cfg['logging'].get('time_per_step', 0.0)}s/step)")
+            logger.info(f"Beginning training: PENDING_STEPS={pending_timesteps}, TARGET_TOTAL={TOTAL_TIMESTEPS}")
+            
         start_time = time.time()
         model.learn(
-            total_timesteps=TOTAL_TIMESTEPS,
+            total_timesteps=pending_timesteps,
             callback=[reward_callback, wandb_callback, checkpoint_callback, entropy_callback, lr_callback],
-            reset_num_timesteps=True
+            reset_num_timesteps=False if latest_checkpoint else True
         )
         end_time = time.time()
 
         total_duration = end_time - start_time
-        actual_time_per_step = total_duration / TOTAL_TIMESTEPS
+        actual_time_per_step = total_duration / pending_timesteps
         logger.info(f"Training finished. Actual average processing time: {actual_time_per_step:.5f}s/step")
         
         logger.info("Saving model.")

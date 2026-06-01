@@ -42,6 +42,7 @@ def compute_attack_reward(score: float, self: object, dsp_params: dict = None) -
     
     # PROGRESS FORMATTING
     if isinstance(current_step, int) and total_timesteps:
+        # Use global progress (current_step is now initialized from completed_steps)
         progress = (current_step / total_timesteps) * 100
         step_str = f"{current_step}/{total_timesteps} ({progress:.1f}%)"
     else:

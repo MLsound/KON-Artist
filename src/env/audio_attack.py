@@ -24,12 +24,13 @@ class AudioAttackEnv(gym.Env):
     RL Environment for optimizing audio spoofing parameters.
     Supports both direct inference and vectorized batch inference modes.
     """
-    def __init__(self, detector=None, dsp_config: dict = None, audio_config: dict = None, audio_files=None, bonus: bool = True, bonus_amount: float = 250.0):
+    def __init__(self, detector=None, dsp_config: dict = None, audio_config: dict = None, audio_files=None, bonus: bool = True, bonus_amount: float = 250.0, completed_steps: int = 0):
         super().__init__()
         self.detector = detector
         self.audio_config = audio_config
         self.bonus = bonus
         self.bonus_amount = bonus_amount
+        self.completed_steps = completed_steps
         
         # Extract rank and seed for identifying logs per worker
         self.rank = audio_config.get("rank", 0) if audio_config else 0
@@ -59,7 +60,7 @@ class AudioAttackEnv(gym.Env):
         self.last_dsp_params = None
         
         # Initialize internal step tracking
-        self.current_step = 0
+        self.current_step = self.completed_steps # Start from completed steps to maintain global progress
         self.step_limit = 10 # Max steps per episode to prevent infinite loops
         self.success_threshold = 0.5  # 50% probability of Bonafide
 

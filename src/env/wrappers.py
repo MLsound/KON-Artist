@@ -19,17 +19,20 @@ class VecDetectorWrapper(VecEnvWrapper):
     Expects the underlying environment to return raw audio waveforms as observations.
     Transforms these waveforms into AASIST3 embeddings for the RL agent.
     """
-    def __init__(self, venv, detector, bonus: bool = True, bonus_amount: float = 250.0):
+    def __init__(self, venv, detector, bonus: bool = True, bonus_amount: float = 250.0, config: dict = None):
         super().__init__(venv)
         self.detector = detector
         self.bonus = bonus
         self.bonus_amount = bonus_amount
+        self.config = config or {}
         # Override observation space to be the embedding space
         self.observation_space = gym.spaces.Box(
             low=-1e5, high=1e5, shape=(160,), dtype=np.float32
         )
         self.success_threshold = 0.5
-        self.total_steps = 0 # Global step counter for vectorized environments
+        
+        # Initialize step counter from completed_steps to maintain global progress on resume
+        self.total_steps = self.config.get('ppo', {}).get('completed_steps', 0) 
 
     def reset(self):
         """Batched reset for all environments."""
