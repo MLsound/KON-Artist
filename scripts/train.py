@@ -122,6 +122,8 @@ def train():
     """
     try:
         logger.info("===== Starting KON-Artist Training Session =====")
+        # Unified hyperparameter log for automated documentation synchronization
+        logger.info(f"TOTAL_TIMESTEPS = {TOTAL_TIMESTEPS} | N_STEPS = {cfg['ppo']['n_steps']} | TOTAL_UPDATES = {cfg['ppo']['total_updates']} | EPOCHS = {cfg['ppo']['epochs']} | BATCH = {BATCH_SIZE}")
         
         # 1. Hardware Check: Enforce CUDA if requested
         requested_device = cfg['model'].get('device', 'cpu')
