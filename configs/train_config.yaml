@@ -17,7 +17,7 @@ ppo:
   biasing:
     enabled: True
     # [jitter, shimmer, tilt, harmonics, threshold, ratio, bitrate]
-    target_signature: [-0.8, -0.8, -0.5, 0.0, 0.0, 1.0, 1.0]
+    target_signature: [-1.0, -1.0, -0.7, -0.3, 0.0, -1.0, 1.0] # Based on longest training (20260601_135618)
   policy: "MlpPolicy"
   verbose: 1
 
