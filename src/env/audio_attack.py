@@ -112,7 +112,7 @@ class AudioAttackEnv(gym.Env):
         
     def _get_obs(self, embedding):
         """Ensures observations are 1D float32 arrays and applies conditioning if enabled."""
-        if self.clustering_config:
+        if self.clustering_config and self.detector is not None:
             return self._get_conditioned_observation(embedding)
             
         # Standard flattening and float32 conversion

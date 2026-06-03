@@ -39,14 +39,14 @@ def generator_from_ds(shuffled_ds):
     Ensures that Bonafide signals are ignored to comply with categorical exclusion rules.
     """
     for sample in shuffled_ds:
-        # ASVspoof 2019 LA: 1 is Bonafide, 0 is Spoof
+        # ASVspoof 2019 LA: 0 is Bonafide, 1 is Spoof
         # MANDATORY: Only yield spoofed signals.
-        if sample["key"] == 1:
+        if sample["key"] == 0:
             continue 
             
         # Access the raw bytes directly
         audio_bytes = sample["audio"]["bytes"]
-        label = sample["key"] # Should be 0 (Spoof)
+        label = sample["key"] # Should be 1 (Spoof)
         
         # Load directly into torch tensor (Mono-conversion happens here)
         waveform, sr = torchaudio.load(io.BytesIO(audio_bytes))

@@ -61,7 +61,10 @@ class AASISTWrapper:
             model.load_state_dict(torch.load(path, map_location=self.device))
             logger.info(f"Loaded AASIST3 model from local checkpoint: {path}")
         else:
-            model = aasist3.from_pretrained(path, force_download=True) # Standard HF load
+            import warnings
+            with warnings.catch_warnings():
+                warnings.filterwarnings("ignore", category=FutureWarning, module="huggingface_hub")
+                model = aasist3.from_pretrained(path) # Standard HF load
             logger.info(f"Loaded AASIST3 model from Hugging Face: {path}")
         
         model.to(self.device).eval()

@@ -108,7 +108,7 @@ def make_env(rank: int, seed: int = 42, completed_steps: int = 0):
             bonus=cfg['ppo'].get('bonus', True), 
             bonus_amount=cfg['ppo'].get('bonus_amount', 250.0),
             completed_steps=completed_steps,
-            clustering_config=cfg.get('clustering', None)
+            clustering_config=None
         )
         # Set environment specific thresholds/limits from config
         env.success_threshold = cfg['env']['success_threshold']

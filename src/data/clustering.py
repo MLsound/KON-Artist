@@ -11,7 +11,11 @@ import os
 import pickle
 import numpy as np
 import torch
+import warnings
 from tqdm import tqdm
+
+# Suppress the specific FutureWarning from huggingface_hub
+warnings.filterwarnings("ignore", category=FutureWarning, module="huggingface_hub")
 from sklearn.decomposition import PCA
 from sklearn.mixture import GaussianMixture
 from sklearn.pipeline import Pipeline
