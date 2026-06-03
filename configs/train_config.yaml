@@ -3,9 +3,9 @@
 
 # PPO Hyperparameters
 ppo:
-  total_updates: 1 # Total number of PPO updates (each update processes N_STEPS)
-  n_steps: 1024 # 2048 is PPO's default rollout buffer size; adjust if using a custom buffer implementation
-  epochs: 1 # Number of epochs per PPO update (default is 4 in stable-baselines3)
+  total_updates: 15 # Total number of PPO updates (each update processes N_STEPS)
+  n_steps: 4096 # 2048 is PPO's default rollout buffer size; adjust if using a custom buffer implementation
+  epochs: 15 # Number of epochs per PPO update (default is 4 in stable-baselines3)
   batch_size: 256 # Batch size for PPO updates (default is 64 in stable-baselines3, but can be adjusted based on memory constraints)
   clip_range: 0.3 # PPO clipping parameter (default is 0.2, but can be adjusted for stability)
   learning_rate: 0.0001 # Learning rate for PPO optimizer (default is 0.0003 in stable-baselines3)
@@ -14,6 +14,10 @@ ppo:
     final: 0.005  # Final entropy coefficient (can be decayed over time to encourage exploitation)
   bonus: True # Whether to use a reward bonus for successful episodes (can be adjusted based on task requirements)
   bonus_amount: 50.0 # Multiplier for the continuous reward bonus
+  biasing:
+    enabled: True
+    # [jitter, shimmer, tilt, harmonics, threshold, ratio, bitrate]
+    target_signature: [-1.0, -1.0, -0.7, -0.3, 0.0, -1.0, 1.0] # Based on longest training (20260601_135618)
   policy: "MlpPolicy"
   verbose: 1
 
@@ -45,7 +49,7 @@ logging:
   log_dir: "outputs/"
   tensorboard_log: null # Set to a path if tensorboard is needed
   reward_log_freq: 1 # Log rewards every N updates (will be converted to steps in script)
-  time_per_step: 0.16817 # Average time per step in seconds for estimation 
+  time_per_step: 0.18415 # Average time per step in seconds for estimation 
   checkpoint:
     save_freq: 1 # Number of PPO UPDATES between checkpoints (will be converted to steps in script)
     save_path: "outputs/checkpoints/"
