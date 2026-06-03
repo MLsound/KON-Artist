@@ -15,7 +15,7 @@ logger = get_logger(name=__file__,
                     log_file="outputs/train_session.log",
                     level=logging.INFO)  # Set to DEBUG for detailed trace during environment interactions
 
-def compute_attack_reward(score: float, self: object, dsp_params: dict = None) -> tuple:
+def compute_attack_reward(score: float, self: object, dsp_params: dict = None, cluster_id: int = None) -> tuple:
     """
     Standardized reward and termination logic for KON-Artist.
     Ensures consistency between single-env and vectorized modes.
@@ -24,6 +24,7 @@ def compute_attack_reward(score: float, self: object, dsp_params: dict = None) -
         score (float): The probability of the attack being classified as 'Bonafide'.
         self (object): The environment instance (AudioAttackEnv or VecDetectorWrapper) to access thresholds and logging.
         dsp_params (dict, optional): The DSP configurations used in the current step.
+        cluster_id (int, optional): The assigned acoustic cluster ID.
 
     Returns:
         reward (float): The computed reward for the current step.
@@ -81,6 +82,7 @@ def compute_attack_reward(score: float, self: object, dsp_params: dict = None) -
         
     # Telemetry Logging
     # Only logs specific step info if running in single-env mode
-    logger.info(f"Worker {worker_id} | Step {step_str} | Score: {score:.4f} | Reward: {reward:.2f} | Bonus: {bonus_applied:.2f} | DSP: {last_params} ")
+    cluster_str = f" | Cluster: {cluster_id}" if cluster_id is not None else ""
+    logger.info(f"Worker {worker_id} | Step {step_str} | Score: {score:.4f} | Reward: {reward:.2f} | Bonus: {bonus_applied:.2f}{cluster_str} | DSP: {last_params} ")
 
     return reward, terminated, bonus_applied

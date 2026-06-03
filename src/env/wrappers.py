@@ -94,6 +94,13 @@ class VecDetectorWrapper(VecEnvWrapper):
         # Process conditioned observations (batch)
         all_conditioned_obs = self._get_conditioned_observations(embeddings)
         
+        # Extract dominant cluster assignments for logging [Total_Inference_Size]
+        cluster_ids = None
+        if self.clustering_config is not None:
+            # Probabilities are stored from index 160 onwards
+            cluster_probs = all_conditioned_obs[:, 160:]
+            cluster_ids = np.argmax(cluster_probs, axis=1)
+
         new_rewards = []
         new_dones = []
         
@@ -105,8 +112,10 @@ class VecDetectorWrapper(VecEnvWrapper):
                 score = scores[idx]
                 # Replace terminal raw audio with conditioned embedding to prevent crash in SB3
                 infos[i]["terminal_observation"] = all_conditioned_obs[idx]
+                c_id = cluster_ids[idx] if cluster_ids is not None else None
             else:
                 score = scores[i]
+                c_id = cluster_ids[i] if cluster_ids is not None else None
             
             # Extract worker-specific info for logging
             self.current_worker = infos[i].get('worker_id', 'N/A')
@@ -117,8 +126,8 @@ class VecDetectorWrapper(VecEnvWrapper):
             # Extract DSP parameters used in this worker's step
             dsp_params = infos[i].get('dsp_params', None)
             
-            # Compute reward and check for termination based on the CORRECT score
-            reward, terminated, bonus = compute_attack_reward(score, self, dsp_params=dsp_params)
+            # Compute reward and check for termination based on the CORRECT score and cluster
+            reward, terminated, bonus = compute_attack_reward(score, self, dsp_params=dsp_params, cluster_id=c_id)
             
             new_rewards.append(reward)
             # SB3 VecEnv handles 'dones' (terminated or truncated)
@@ -135,6 +144,8 @@ class VecDetectorWrapper(VecEnvWrapper):
             infos[i]['reward'] = reward
             infos[i]['bonus'] = bonus
             infos[i]['terminated'] = terminated
+            if c_id is not None:
+                infos[i]['cluster_id'] = int(c_id)
             
         # Return conditioned embeddings of current observations [0:num_envs]
         return all_conditioned_obs[:self.num_envs], np.array(new_rewards), np.array(new_dones), infos

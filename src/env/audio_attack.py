@@ -166,11 +166,13 @@ class AudioAttackEnv(gym.Env):
         
         if self.clustering_config:
             obs = self._get_conditioned_observation(embedding)
+            cluster_id = int(np.argmax(obs[160:]))
         else:
             obs = self._get_obs(embedding) # Observation: The embedding from AASIST3 (160-dim)
+            cluster_id = None
                 
         # 3. Compute reward and check for termination
-        reward, terminated, bonus = compute_attack_reward(score, self) # Centralized call ensures logic parity with non-vectorized env
+        reward, terminated, bonus = compute_attack_reward(score, self, cluster_id=cluster_id) # Centralized call ensures logic parity with non-vectorized env
 
         # Collect info for logging and analysis
         info = {
@@ -183,6 +185,8 @@ class AudioAttackEnv(gym.Env):
             'worker_id': self.rank,
             'seed': self.seed
         }
+        if cluster_id is not None:
+            info['cluster_id'] = cluster_id
 
         return obs, reward, terminated, truncated, info
     
@@ -236,6 +240,8 @@ class AudioAttackEnv(gym.Env):
         
         if self.clustering_config:
             obs = self._get_conditioned_observation(embeddings[0])
+            cluster_id = int(np.argmax(obs[160:]))
+            info['cluster_id'] = cluster_id
         else:
             obs = self._get_obs(embeddings[0]) # Observation: The embedding from AASIST3 (160-dim)
 
