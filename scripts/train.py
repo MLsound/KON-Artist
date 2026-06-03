@@ -266,6 +266,33 @@ def train():
             logger.info(f"⌛️ Estimated PENDING training time: {int(hours)}h {int(minutes)}m {int(seconds)}s (based on {cfg['logging'].get('time_per_step', 0.0)}s/step)")
             logger.info(f"Beginning training: PENDING_STEPS={pending_timesteps}, TARGET_TOTAL={TOTAL_TIMESTEPS}")
             
+        # --- ACTOR NETWORK BIASING (Prior Knowledge Injection) ---
+        # We warm-start exploration by shifting the initial mean toward a "Winning Signature".
+        biasing_cfg = cfg['ppo'].get('biasing', {})
+        if not latest_checkpoint and biasing_cfg.get('enabled', False):
+            logger.info(f"Injecting 'Winning Signature' bias into Actor network: {biasing_cfg['target_signature']}")
+            target_signature = torch.tensor(biasing_cfg['target_signature'], dtype=torch.float32)
+            
+            with torch.no_grad():
+                # Check if SB3 policy uses squashing (standard Tanh on DiagGaussian output)
+                # PPO MlpPolicy usually doesn't, but we handle it for architectural robustness.
+                use_squashing = getattr(model.policy, "squash_output", False)
+                
+                if use_squashing:
+                    # Apply inverse Tanh (arctanh) so post-activation mean matches targets
+                    # For 1.0, we use 4.0 to avoid infinity while forcing saturation
+                    biases = torch.zeros_like(target_signature)
+                    for i, val in enumerate(target_signature):
+                        if val >= 1.0: biases[i] = 4.0
+                        elif val <= -1.0: biases[i] = -4.0
+                        else: biases[i] = torch.atanh(val)
+                else:
+                    biases = target_signature
+                
+                # Overwrite action_net bias (shape: [action_dim])
+                model.policy.action_net.bias.copy_(biases)
+        # ---------------------------------------------------------
+
         start_time = time.time()
         model.learn(
             total_timesteps=pending_timesteps,
