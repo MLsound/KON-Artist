@@ -24,10 +24,11 @@ class AudioAttackEnv(gym.Env):
     RL Environment for optimizing audio spoofing parameters.
     Supports both direct inference and vectorized batch inference modes.
     """
-    def __init__(self, detector=None, dsp_config: dict = None, audio_config: dict = None, audio_files=None, bonus: bool = True, bonus_amount: float = 250.0, completed_steps: int = 0):
+    def __init__(self, detector=None, dsp_config: dict = None, audio_config: dict = None, audio_files=None, bonus: bool = True, bonus_amount: float = 250.0, completed_steps: int = 0, clustering_config: dict = None):
         super().__init__()
         self.detector = detector
         self.audio_config = audio_config
+        self.clustering_config = clustering_config
         self.bonus = bonus
         self.bonus_amount = bonus_amount
         self.completed_steps = completed_steps
@@ -49,11 +50,15 @@ class AudioAttackEnv(gym.Env):
         # 7-dimensional action space (Jitter, Shimmer, Tilt, etc.)
         self.action_space = gym.spaces.Box(low=-1, high=1, shape=(7,), dtype=np.float32)
         
-        # Observation space: 160-dim embedding (if detector present) or 64600-dim raw audio
+        # Observation space: 160-dim embedding (+ K clustering dims if enabled) or 64600-dim raw audio
         if self.detector:
-            self.observation_space = gym.spaces.Box(low=-1e5, high=1e5, shape=(160,), dtype=np.float32)
+            obs_dim = 160
+            if self.clustering_config:
+                obs_dim += self.clustering_config.get('n_components', 0)
+            self.observation_space = gym.spaces.Box(low=-1e5, high=1e5, shape=(obs_dim,), dtype=np.float32)
         else:
             # Fixed AASIST3 length: 64600 samples
+            # Note: VecDetectorWrapper will override this to (160 + K,)
             self.observation_space = gym.spaces.Box(low=-1e5, high=1e5, shape=(64600,), dtype=np.float32)
         
         self.current_audio = None
@@ -63,6 +68,31 @@ class AudioAttackEnv(gym.Env):
         self.current_step = self.completed_steps # Start from completed steps to maintain global progress
         self.step_limit = 10 # Max steps per episode to prevent infinite loops
         self.success_threshold = 0.5  # 50% probability of Bonafide
+
+    def _get_conditioned_observation(self, baseline_embedding):
+        """
+        Lazily loads the serialized GMM pipeline inside worker processes to avoid pickling failures
+        and appends the soft cluster distribution vector to the environment observation.
+        """
+        if not hasattr(self, "clustering_pipeline"):
+            import pickle
+            try:
+                with open(self.clustering_config["model_path"], "rb") as f:
+                    self.clustering_pipeline = pickle.load(f)
+            except (FileNotFoundError, KeyError) as e:
+                logger.error(f"Failed to load clustering pipeline: {e}")
+                raise RuntimeError(f"Clustering enabled but pipeline not found at {self.clustering_config.get('model_path')}")
+                
+        # Ensure standard numpy array formatting [1, 160]
+        if isinstance(baseline_embedding, torch.Tensor):
+            embedding_np = baseline_embedding.detach().cpu().numpy().reshape(1, -1)
+        else:
+            embedding_np = np.array(baseline_embedding).reshape(1, -1)
+            
+        cluster_probabilities = self.clustering_pipeline.predict_proba(embedding_np).flatten()
+        unified_observation = np.concatenate([embedding_np.flatten(), cluster_probabilities])
+        
+        return unified_observation.astype(np.float32)
 
     def _denormalize(self, action: np.ndarray) -> dict:
         """
@@ -81,8 +111,11 @@ class AudioAttackEnv(gym.Env):
         }
         
     def _get_obs(self, embedding):
-        """Ensures observations are 1D float32 arrays for PPO buffer compatibility."""
-        # Flatten (1, 160) -> (160,) and ensure float32
+        """Ensures observations are 1D float32 arrays and applies conditioning if enabled."""
+        if self.clustering_config:
+            return self._get_conditioned_observation(embedding)
+            
+        # Standard flattening and float32 conversion
         if isinstance(embedding, torch.Tensor):
             return embedding.cpu().numpy().flatten().astype(np.float32)
         return embedding.flatten().astype(np.float32)
@@ -130,7 +163,11 @@ class AudioAttackEnv(gym.Env):
         score, embedding = scores[0], embeddings[0] # Assuming batch size of 1 for direct inference mode
         logger.debug(f"Embedding shape: {embedding.shape}") # Debugging statement to trace embedding extraction
         logger.debug(f"AASIST3 score: {score}") # Debugging statement to trace model output
-        obs = self._get_obs(embedding) # Observation: The embedding from AASIST3 (160-dim)
+        
+        if self.clustering_config:
+            obs = self._get_conditioned_observation(embedding)
+        else:
+            obs = self._get_obs(embedding) # Observation: The embedding from AASIST3 (160-dim)
                 
         # 3. Compute reward and check for termination
         reward, terminated, bonus = compute_attack_reward(score, self) # Centralized call ensures logic parity with non-vectorized env
@@ -196,7 +233,11 @@ class AudioAttackEnv(gym.Env):
         # Initial inference
         scores, embeddings = self.detector.get_score_and_embedding(self.current_audio)
         score = scores[0]
-        obs = self._get_obs(embeddings[0]) # Observation: The embedding from AASIST3 (160-dim)
+        
+        if self.clustering_config:
+            obs = self._get_conditioned_observation(embeddings[0])
+        else:
+            obs = self._get_obs(embeddings[0]) # Observation: The embedding from AASIST3 (160-dim)
 
         info.update({'score': float(score), 'label': target_label})
         return obs, info

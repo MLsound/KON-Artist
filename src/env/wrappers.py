@@ -25,14 +25,40 @@ class VecDetectorWrapper(VecEnvWrapper):
         self.bonus = bonus
         self.bonus_amount = bonus_amount
         self.config = config or {}
-        # Override observation space to be the embedding space
+        
+        # Acoustic Clustering Configuration
+        self.clustering_config = self.config.get('clustering', None)
+        obs_dim = 160
+        if self.clustering_config:
+            obs_dim += self.clustering_config.get('n_components', 4)
+            
+        # Override observation space to be the embedding space (+ clustering context)
         self.observation_space = gym.spaces.Box(
-            low=-1e5, high=1e5, shape=(160,), dtype=np.float32
+            low=-1e5, high=1e5, shape=(obs_dim,), dtype=np.float32
         )
         self.success_threshold = 0.5
         
         # Initialize step counter from completed_steps to maintain global progress on resume
         self.total_steps = self.config.get('ppo', {}).get('completed_steps', 0) 
+
+    def _get_conditioned_observations(self, embeddings):
+        """
+        Batched context injection for vectorized observations.
+        """
+        if self.clustering_config is None:
+            return embeddings.cpu().numpy().astype(np.float32)
+            
+        if not hasattr(self, "clustering_pipeline"):
+            import pickle
+            with open(self.clustering_config["model_path"], "rb") as f:
+                self.clustering_pipeline = pickle.load(f)
+                
+        embeddings_np = embeddings.cpu().numpy()
+        cluster_probs = self.clustering_pipeline.predict_proba(embeddings_np)
+        
+        # Concatenate and cast to float32
+        unified_obs = np.concatenate([embeddings_np, cluster_probs], axis=1)
+        return unified_obs.astype(np.float32)
 
     def reset(self):
         """Batched reset for all environments."""
@@ -41,7 +67,7 @@ class VecDetectorWrapper(VecEnvWrapper):
         waveform = torch.from_numpy(obs).unsqueeze(1).float() # [N, 1, L]
         
         _, embeddings = self.detector.get_score_and_embedding(waveform)
-        return embeddings.cpu().numpy()
+        return self._get_conditioned_observations(embeddings)
 
     def step_wait(self):
         """Batched step wait for all environments."""
@@ -65,6 +91,9 @@ class VecDetectorWrapper(VecEnvWrapper):
         batch_waveform = torch.cat(waveforms, dim=0).unsqueeze(1).float() # [Total, 1, L]
         scores, embeddings = self.detector.get_score_and_embedding(batch_waveform)
         
+        # Process conditioned observations (batch)
+        all_conditioned_obs = self._get_conditioned_observations(embeddings)
+        
         new_rewards = []
         new_dones = []
         
@@ -74,8 +103,8 @@ class VecDetectorWrapper(VecEnvWrapper):
             if i in terminal_map:
                 idx = terminal_map[i]
                 score = scores[idx]
-                # Replace terminal raw audio with embedding to prevent crash in SB3
-                infos[i]["terminal_observation"] = embeddings[idx].cpu().numpy().flatten().astype(np.float32)
+                # Replace terminal raw audio with conditioned embedding to prevent crash in SB3
+                infos[i]["terminal_observation"] = all_conditioned_obs[idx]
             else:
                 score = scores[i]
             
@@ -94,13 +123,18 @@ class VecDetectorWrapper(VecEnvWrapper):
             new_rewards.append(reward)
             # SB3 VecEnv handles 'dones' (terminated or truncated)
             # We add our own 'terminated' condition from the detector
-            new_dones.append(dones[i] or terminated)
+            is_done = dones[i] or terminated
+            new_dones.append(is_done)
             
+            # If the episode ended (either in worker or here), ensure terminal_observation exists
+            if is_done and "terminal_observation" not in infos[i]:
+                infos[i]["terminal_observation"] = all_conditioned_obs[i]
+
             # Update info dictionaries with actual detector results
             infos[i]['score'] = float(score)
             infos[i]['reward'] = reward
             infos[i]['bonus'] = bonus
             infos[i]['terminated'] = terminated
             
-        # Return embeddings of current observations [0:num_envs]
-        return embeddings[:self.num_envs].cpu().numpy(), np.array(new_rewards), np.array(new_dones), infos
+        # Return conditioned embeddings of current observations [0:num_envs]
+        return all_conditioned_obs[:self.num_envs], np.array(new_rewards), np.array(new_dones), infos

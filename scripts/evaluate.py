@@ -25,10 +25,17 @@ from src.utils.metrics import compute_eer, compute_mindcf
 from src.utils.logger import get_logger
 import logging
 
+import yaml
+from src.utils.misc import create_timestamp
+
 # Initialize logger
 logger = get_logger(name=__file__,
                     log_file="outputs/eval_session.log",
                     level=logging.INFO)
+
+def load_config(config_path="configs/train_config.yaml"):
+    with open(config_path, "r") as f:
+        return yaml.safe_load(f)
 
 def profile_pipeline(detector, num_batches=5, batch_size=4):
     """
@@ -83,7 +90,13 @@ def run_evaluation(model_path, num_samples=500):
     baseline_spoof_scores = []
     adversarial_spoof_scores = []
     
-    env = AudioAttackEnv(detector=detector, dsp_config={}, audio_files=[])
+    cfg = load_config()
+    env = AudioAttackEnv(
+        detector=detector, 
+        dsp_config={}, 
+        audio_files=[], 
+        clustering_config=cfg.get('clustering', None)
+    )
 
     logger.info(f"Processing up to {num_samples} balanced samples...")
     

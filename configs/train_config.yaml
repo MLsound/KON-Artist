@@ -29,6 +29,12 @@ audio:
   split: "train"
   buffer_size: 1000 # Number of audio samples into memory at once for training. Adjust based on available RAM. (Ideally between 5,000 and 20,000 for ASVspoof)
 
+# Acoustic Clustering Settings
+clustering:
+  pca_components: 32
+  n_components: 4
+  model_path: "models/gmm_registry.pkl"
+
 # Model Settings
 model:
   detector_name: "MTUCI/AASIST3"
