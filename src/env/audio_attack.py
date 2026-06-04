@@ -54,7 +54,17 @@ class AudioAttackEnv(gym.Env):
         if self.detector:
             obs_dim = 160
             if self.clustering_config:
-                obs_dim += self.clustering_config.get('n_components', 0)
+                # Try to get actual n_components from model file
+                import pickle
+                import warnings
+                try:
+                    with open(self.clustering_config["model_path"], "rb") as f:
+                        with warnings.catch_warnings():
+                            warnings.simplefilter("ignore", category=UserWarning)
+                            pipe = pickle.load(f)
+                            obs_dim += pipe.named_steps['gmm'].n_components
+                except (FileNotFoundError, KeyError):
+                    obs_dim += self.clustering_config.get('n_components', 4)
             self.observation_space = gym.spaces.Box(low=-1e5, high=1e5, shape=(obs_dim,), dtype=np.float32)
         else:
             # Fixed AASIST3 length: 64600 samples
@@ -76,9 +86,13 @@ class AudioAttackEnv(gym.Env):
         """
         if not hasattr(self, "clustering_pipeline"):
             import pickle
+            import warnings
             try:
                 with open(self.clustering_config["model_path"], "rb") as f:
-                    self.clustering_pipeline = pickle.load(f)
+                    # Suppress sklearn version mismatch warnings
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", category=UserWarning)
+                        self.clustering_pipeline = pickle.load(f)
             except (FileNotFoundError, KeyError) as e:
                 logger.error(f"Failed to load clustering pipeline: {e}")
                 raise RuntimeError(f"Clustering enabled but pipeline not found at {self.clustering_config.get('model_path')}")

@@ -8,6 +8,11 @@ to identify acoustic sub-manifolds.
 """
 
 import os
+
+# SET OMP_NUM_THREADS=1 BEFORE ANY SCIPY/NUMPY/TORCH IMPORTS
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+
 import pickle
 import numpy as np
 import torch
@@ -18,6 +23,7 @@ from tqdm import tqdm
 warnings.filterwarnings("ignore", category=FutureWarning, module="huggingface_hub")
 from sklearn.decomposition import PCA
 from sklearn.mixture import GaussianMixture
+from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import silhouette_score
 import matplotlib.pyplot as plt
@@ -36,25 +42,105 @@ def load_config(config_path="configs/train_config.yaml"):
 cfg = load_config()
 logger = get_logger(name=__file__, level=logging.INFO)
 
-def extract_all_embeddings(detector, loader, device="cuda"):
+def extract_all_embeddings(detector, loader, device="cuda", batch_size=64, max_samples=10000):
     """
-    Extracts embeddings for all spoofed samples in the loader.
-    Uses batching (implicitly via generator) and torch.no_grad() to prevent VRAM saturation.
+    Extracts embeddings for spoofed samples in the loader using batched inference.
+    Limits processing to max_samples to ensure representative but fast manifold identification.
     """
     embeddings = []
-    logger.info("Starting embedding extraction for the training split...")
+    logger.info(f"Starting batched embedding extraction (batch_size={batch_size}, max_samples={max_samples})...")
     
-    # We use the generator which yields (waveform, label)
-    # The detector wrapper handle [1, L] or [B, L]
+    waveforms_batch = []
+    total_extracted = 0
     
     with torch.no_grad():
-        for waveform, label in tqdm(generator_from_ds(loader), desc="Extracting embeddings"):
-            # AASISTWrapper expects waveform as tensor
-            # generator_from_ds yields preprocessed tensors
-            _, embedding = detector.get_score_and_embedding(waveform)
-            embeddings.append(embedding.cpu().numpy().flatten())
+        pbar = tqdm(total=max_samples, desc="Extracting embeddings")
+        for waveform, label in generator_from_ds(loader):
+            # waveform is already [1, L] from generator_from_ds
+            waveforms_batch.append(waveform)
             
-    return np.array(embeddings).astype(np.float32)
+            # If batch is full or we reached max_samples, process it
+            if len(waveforms_batch) == batch_size or (total_extracted + len(waveforms_batch)) >= max_samples:
+                # Handle cases where we might overshoot max_samples in the last batch
+                current_batch_size = len(waveforms_batch)
+                if (total_extracted + current_batch_size) > max_samples:
+                    needed = max_samples - total_extracted
+                    waveforms_batch = waveforms_batch[:needed]
+                    current_batch_size = needed
+                
+                # Stack waveforms into [B, 1, L] for AASISTWrapper
+                batch_tensor = torch.cat(waveforms_batch, dim=0).unsqueeze(1).to(device)
+                
+                # AASISTWrapper handles batched [B, 1, L]
+                _, embedding = detector.get_score_and_embedding(batch_tensor)
+                embeddings.append(embedding.cpu().numpy())
+                
+                total_extracted += current_batch_size
+                pbar.update(current_batch_size)
+                waveforms_batch = []
+                
+            if total_extracted >= max_samples:
+                break
+        
+        pbar.close()
+            
+    # Concatenate list of batch embeddings into a single [N, D] array
+    return np.vstack(embeddings).astype(np.float32)
+
+def optimize_clustering_params(embeddings):
+    """
+    Analyzes embeddings to find optimal PCA and GMM configurations.
+    """
+    logger.info("Optimizing clustering parameters...")
+    
+    # 0. Pre-scaling for stability
+    scaler = StandardScaler().fit(embeddings)
+    scaled_embeddings = scaler.transform(embeddings)
+    
+    # 1. Optimize PCA
+    pca = PCA().fit(scaled_embeddings)
+    cumulative_variance = np.cumsum(pca.explained_variance_ratio_)
+    
+    # Find components needed for 95% variance
+    optimal_pca = int(np.argmax(cumulative_variance >= 0.95) + 1)
+    logger.info(f"Optimal PCA components (95% variance): {optimal_pca}")
+    
+    # Apply optimal PCA for the GMM test
+    reduced_embeddings = PCA(n_components=optimal_pca).fit_transform(scaled_embeddings)
+    
+    # 2. Optimize GMM (Testing K=2 to K=10)
+    n_components_range = range(2, 11)
+    bic_scores = []
+    
+    for k in n_components_range:
+        gmm = GaussianMixture(n_components=k, covariance_type="full", random_state=42)
+        gmm.fit(reduced_embeddings)
+        bic_scores.append(gmm.bic(reduced_embeddings))
+        
+    optimal_k = int(n_components_range[np.argmin(bic_scores)])
+    logger.info(f"Optimal GMM components (Lowest BIC): {optimal_k}")
+    
+    # Plotting for visual confirmation
+    plt.figure(figsize=(10, 4))
+    plt.subplot(1, 2, 1)
+    plt.plot(cumulative_variance)
+    plt.axhline(y=0.95, color='r', linestyle='--')
+    plt.title("PCA Explained Variance")
+    plt.xlabel("Number of Components")
+    plt.ylabel("Cumulative Explained Variance")
+    
+    plt.subplot(1, 2, 2)
+    plt.plot(n_components_range, bic_scores, marker='o')
+    plt.title("GMM BIC Scores")
+    plt.xlabel("Number of Clusters (K)")
+    plt.ylabel("BIC Score")
+    
+    viz_dir = "outputs/plots/"
+    os.makedirs(viz_dir, exist_ok=True)
+    plt.savefig(os.path.join(viz_dir, "clustering_optimization.png"))
+    logger.info(f"Optimization plots saved to {viz_dir}clustering_optimization.png")
+    
+    return optimal_pca, optimal_k
 
 def run_clustering_pipeline():
     # 1. Hardware and Detector Setup
@@ -69,25 +155,37 @@ def run_clustering_pipeline():
     loader = get_asvspoof_loader(split="train", buffer_size=cfg['audio']['buffer_size'])
     
     # 3. Extraction
-    embeddings = extract_all_embeddings(detector, loader, device=device)
+    # Using optimized parameters: batch_size=64 for GPU throughput, max_samples=10000 for manifold representation
+    embeddings = extract_all_embeddings(
+        detector, 
+        loader, 
+        device=device, 
+        batch_size=64, 
+        max_samples=10000
+    )
     logger.info(f"Extracted {embeddings.shape[0]} embeddings of dimension {embeddings.shape[1]}.")
     
-    # 4. Fit PCA + GMM Pipeline
-    pca_dim = cfg['clustering']['pca_components']
-    n_clusters = cfg['clustering']['n_components']
+    # 4. Parameter Optimization
+    pca_dim, n_clusters = optimize_clustering_params(embeddings)
     
-    logger.info(f"Fitting PCA (dim={pca_dim}) and GMM (K={n_clusters})...")
+    # 5. Fit Scaling + PCA + GMM Pipeline
+    logger.info(f"Fitting final Pipeline with Scaler, PCA (dim={pca_dim}) and GMM (K={n_clusters})...")
     
     pipeline = Pipeline([
+        ('scaler', StandardScaler()),
         ('pca', PCA(n_components=pca_dim, random_state=42)),
         ('gmm', GaussianMixture(n_components=n_clusters, covariance_type="full", random_state=42))
     ])
     
     pipeline.fit(embeddings)
     
-    # 5. Verification & Analytics
+    # 6. Verification & Analytics
     labels = pipeline.predict(embeddings)
-    soft_labels = pipeline.predict_proba(embeddings)
+    
+    # Cluster Distribution
+    unique, counts = np.unique(labels, return_counts=True)
+    dist = dict(zip(unique, counts))
+    logger.info(f"Cluster Distribution: {dist}")
     
     # Silhouette Score
     # Note: silhouette_score can be slow on large datasets, so we might sample
@@ -99,12 +197,14 @@ def run_clustering_pipeline():
         
     logger.info(f"Cluster Analysis: Silhouette Score = {sil_score:.4f}")
     
-    # 6. Visualization (t-SNE)
+    # 7. Visualization (t-SNE)
     logger.info("Generating t-SNE visualization...")
     tsne = TSNE(n_components=2, random_state=42)
     # Sample for visualization
     indices = np.random.choice(embeddings.shape[0], min(2000, embeddings.shape[0]), replace=False)
-    embeddings_2d = tsne.fit_transform(embeddings[indices])
+    # We must scale before t-SNE to match GMM input manifold
+    scaled_emb_sample = pipeline.named_steps['scaler'].transform(embeddings[indices])
+    embeddings_2d = tsne.fit_transform(scaled_emb_sample)
     
     plt.figure(figsize=(10, 8))
     scatter = plt.scatter(embeddings_2d[:, 0], embeddings_2d[:, 1], c=labels[indices], cmap='viridis', alpha=0.6)
@@ -118,7 +218,7 @@ def run_clustering_pipeline():
     plt.savefig(viz_path)
     logger.info(f"Visualization saved to {viz_path}")
     
-    # 7. Export
+    # 8. Export
     export_path = cfg['clustering']['model_path']
     os.makedirs(os.path.dirname(export_path), exist_ok=True)
     with open(export_path, "wb") as f:

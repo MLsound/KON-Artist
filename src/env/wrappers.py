@@ -11,6 +11,10 @@ import torch
 import gymnasium as gym
 from stable_baselines3.common.vec_env import VecEnvWrapper
 from src.env.reward_logic import compute_attack_reward
+from src.utils.logger import get_logger
+import logging
+
+logger = get_logger(name=__file__, level=logging.INFO)
 
 class VecDetectorWrapper(VecEnvWrapper):
     """
@@ -30,7 +34,23 @@ class VecDetectorWrapper(VecEnvWrapper):
         self.clustering_config = self.config.get('clustering', None)
         obs_dim = 160
         if self.clustering_config:
-            obs_dim += self.clustering_config.get('n_components', 4)
+            # Eagerly load the pipeline to determine the actual number of clusters
+            import pickle
+            import warnings
+            try:
+                with open(self.clustering_config["model_path"], "rb") as f:
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", category=UserWarning)
+                        self.clustering_pipeline = pickle.load(f)
+                
+                # Determine n_clusters from the GMM step in the pipeline
+                n_clusters = self.clustering_pipeline.named_steps['gmm'].n_components
+                obs_dim += n_clusters
+                logger.info(f"Clustering enabled for VecDetectorWrapper. Clusters detected: {n_clusters}")
+            except (FileNotFoundError, KeyError) as e:
+                logger.error(f"Failed to load clustering pipeline: {e}")
+                # Fallback to config value or default if file missing
+                obs_dim += self.clustering_config.get('n_components', 4)
             
         # Override observation space to be the embedding space (+ clustering context)
         self.observation_space = gym.spaces.Box(
@@ -48,11 +68,7 @@ class VecDetectorWrapper(VecEnvWrapper):
         if self.clustering_config is None:
             return embeddings.cpu().numpy().astype(np.float32)
             
-        if not hasattr(self, "clustering_pipeline"):
-            import pickle
-            with open(self.clustering_config["model_path"], "rb") as f:
-                self.clustering_pipeline = pickle.load(f)
-                
+        # Pipeline is now eagerly loaded in __init__
         embeddings_np = embeddings.cpu().numpy()
         cluster_probs = self.clustering_pipeline.predict_proba(embeddings_np)
         
@@ -94,12 +110,18 @@ class VecDetectorWrapper(VecEnvWrapper):
         # Process conditioned observations (batch)
         all_conditioned_obs = self._get_conditioned_observations(embeddings)
         
-        # Extract dominant cluster assignments for logging [Total_Inference_Size]
+        # Extract dominant cluster assignments for logging [Total_InFERENCE_Size]
         cluster_ids = None
         if self.clustering_config is not None:
             # Probabilities are stored from index 160 onwards
             cluster_probs = all_conditioned_obs[:, 160:]
             cluster_ids = np.argmax(cluster_probs, axis=1)
+            
+            # Periodically log cluster distribution for diagnostic transparency
+            if self.total_steps % 100 == 0:
+                unique, counts = np.unique(cluster_ids, return_counts=True)
+                dist = dict(zip(unique, counts))
+                logger.info(f"Batch Cluster Distribution: {dist}")
 
         new_rewards = []
         new_dones = []
