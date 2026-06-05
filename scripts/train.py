@@ -75,16 +75,16 @@ logger = get_logger(name=__file__,
 
 # DERIVED SETTINGS & AUTO-SCALING
 # Automatically scale workers based on CPU cores (All cores - 1 to leave room for the main process)
-N_ENVS = cfg['env']['n_envs']
+N_ENVS = int(cfg['env']['n_envs'])
 # Increasing N_ENVS increases sample diversity per gradient update, which usually allows for more stable learning
 # but requires recalculating total timesteps to keep benchmarking comparable.
 if N_ENVS == -1:
     N_ENVS = max(1, os.cpu_count() - 1) # Number of parallel environments (CPU workers)
 
 # PPO SCALING RULE: Total timesteps should be divisible by (n_steps * n_envs) to ensure full batches during updates.
-TOTAL_ROLLOUT_BUFFER = cfg['ppo']['n_steps'] * N_ENVS # Total samples collected per PPO update (must be divisible by batch_size)
-TOTAL_TIMESTEPS = TOTAL_ROLLOUT_BUFFER * cfg['ppo']['total_updates'] # Total timesteps for training (must be divisible by batch_size)
-BATCH_SIZE = min(cfg['ppo']['batch_size'], TOTAL_ROLLOUT_BUFFER) # Ensure batch size does not exceed the number of steps in the buffer
+TOTAL_ROLLOUT_BUFFER = int(cfg['ppo']['n_steps']) * N_ENVS # Total samples collected per PPO update (must be divisible by batch_size)
+TOTAL_TIMESTEPS = TOTAL_ROLLOUT_BUFFER * int(cfg['ppo']['total_updates']) # Total timesteps for training (must be divisible by batch_size)
+BATCH_SIZE = min(int(cfg['ppo']['batch_size']), TOTAL_ROLLOUT_BUFFER) # Ensure batch size does not exceed the number of steps in the buffer
 
 # Log the actual training configuration for transparency and debugging
 logger.info(f"PPO Configuration: RolloutBuffer={TOTAL_ROLLOUT_BUFFER}, MiniBatch={BATCH_SIZE}, TotalSteps={TOTAL_TIMESTEPS}")
@@ -96,23 +96,23 @@ def make_env(rank: int, seed: int = 42, completed_steps: int = 0):
     def _init():
         # Lazy initialization via audio_config for pickling compatibility
         audio_config = {
-            "split": cfg['audio']['split'],
-            "seed": seed + rank,
+            "split": str(cfg['audio']['split']),
+            "seed": int(cfg['env']['seed']) + rank,
             "rank": rank,
-            "buffer_size": cfg['audio']['buffer_size']
+            "buffer_size": int(cfg['audio']['buffer_size'])
         }
         # Worker has NO detector (it's in the VecDetectorWrapper on the main process)
         env = AudioAttackEnv(
             detector=None, 
             audio_config=audio_config, 
-            bonus=cfg['ppo'].get('bonus', True), 
-            bonus_amount=cfg['ppo'].get('bonus_amount', 250.0),
+            bonus=bool(cfg['ppo'].get('bonus', True)), 
+            bonus_amount=float(cfg['ppo'].get('bonus_amount', 250.0)),
             completed_steps=completed_steps,
             clustering_config=None
         )
         # Set environment specific thresholds/limits from config
-        env.success_threshold = cfg['env']['success_threshold']
-        env.step_limit = cfg['env']['step_limit']
+        env.success_threshold = float(cfg['env']['success_threshold'])
+        env.step_limit = int(cfg['env']['step_limit'])
         
         return env
     return _init
@@ -124,10 +124,10 @@ def train():
     try:
         logger.info("===== Starting KON-Artist Training Session =====")
         # Unified hyperparameter log for automated documentation synchronization
-        logger.info(f"TOTAL_TIMESTEPS = {TOTAL_TIMESTEPS} | N_STEPS = {cfg['ppo']['n_steps']} | TOTAL_UPDATES = {cfg['ppo']['total_updates']} | EPOCHS = {cfg['ppo']['epochs']} | BATCH = {BATCH_SIZE}")
+        logger.info(f"TOTAL_TIMESTEPS = {TOTAL_TIMESTEPS} | N_STEPS = {int(cfg['ppo']['n_steps'])} | TOTAL_UPDATES = {int(cfg['ppo']['total_updates'])} | EPOCHS = {int(cfg['ppo']['epochs'])} | BATCH = {BATCH_SIZE}")
         
         # 1. Hardware Check: Enforce CUDA if requested
-        requested_device = cfg['model'].get('device', 'cpu')
+        requested_device = str(cfg['model'].get('device', 'cpu'))
         if requested_device == "cuda" and not torch.cuda.is_available():
             critical_error = "‼️ CRITICAL: CUDA requested but not available. Aborting to prevent inefficient CPU execution."
             logger.error(critical_error)
@@ -136,21 +136,23 @@ def train():
             logger.warning("⚠️ WARNING: CPU execution requested. Training will be significantly slower. Ensure this is intentional. (Go to configs/train_config.yaml to change this setting)")
             
         # 2. Initialize the detector wrapper (Centralized for batched GPU inference)
-        logger.info(f"Loading {cfg['model']['detector_name']} model for batched inference.")
+        detector_name_str = str(cfg['model']['detector_name'])
+        logger.info(f"Loading {detector_name_str} model for batched inference.")
         
         # Log Bonus Configuration
-        bonus_enabled = cfg['ppo'].get('bonus', True)
-        bonus_amount = cfg['ppo'].get('bonus_amount', 250.0)
+        bonus_enabled = bool(cfg['ppo'].get('bonus', True))
+        bonus_amount = float(cfg['ppo'].get('bonus_amount', 250.0))
         logger.info(f"Bonus Reward: {f'ENABLED (Amount: {bonus_amount})' if bonus_enabled else '❕DISABLED'}")
 
-        detector = AASISTWrapper(cfg['model']['detector_name'], device=requested_device)
+        detector = AASISTWrapper(detector_name_str, device=requested_device)
         
         # CHECKPOINT DETECTION (Moved early to inform wrappers/logic)
         checkpoint_cfg = cfg['logging'].get('checkpoint', {})
         latest_checkpoint = None
         completed_steps = 0
-        if checkpoint_cfg.get('load_last', False):
-            latest_checkpoint = get_latest_checkpoint(checkpoint_cfg.get('save_path', "outputs/checkpoints/"))
+        if bool(checkpoint_cfg.get('load_last', False)):
+            save_path_str = str(checkpoint_cfg.get('save_path', "outputs/checkpoints/"))
+            latest_checkpoint = get_latest_checkpoint(save_path_str)
             if latest_checkpoint:
                 try:
                     filename = os.path.basename(latest_checkpoint)
@@ -161,10 +163,11 @@ def train():
         
         # 2. Initialize Vectorized Environments
         logger.info(f"Instantiating {N_ENVS} parallel environments.")
+        env_seed = int(cfg['env']['seed'])
         if N_ENVS > 1:
-            env = SubprocVecEnv([make_env(i, cfg['env']['seed'], completed_steps) for i in range(N_ENVS)])
+            env = SubprocVecEnv([make_env(i, env_seed, completed_steps) for i in range(N_ENVS)])
         else:
-            env = DummyVecEnv([make_env(0, cfg['env']['seed'], completed_steps)])
+            env = DummyVecEnv([make_env(0, env_seed, completed_steps)])
 
         # 3. Wrap for Batched GPU Inference
         logger.info("Wrapping environment with VecDetectorWrapper for GPU batching.")
@@ -176,12 +179,12 @@ def train():
         env = VecDetectorWrapper(
             env, 
             detector, 
-            bonus=cfg['ppo'].get('bonus', True), 
-            bonus_amount=cfg['ppo'].get('bonus_amount', 250.0),
+            bonus=bonus_enabled, 
+            bonus_amount=bonus_amount,
             config=cfg
         )
         env.total_timesteps = TOTAL_TIMESTEPS
-        env.success_threshold = cfg['env']['success_threshold']
+        env.success_threshold = float(cfg['env']['success_threshold'])
         
         # 4. Wrap with VecMonitor to track actual rewards
         # VecMonitor is required for RewardLoggerCallback to access ep_info_buffer
@@ -191,7 +194,11 @@ def train():
         logger.info("Configuring PPO agent.")
         
         # Initialize learning rate schedule
-        lr_schedule = linear_schedule(cfg['ppo']['learning_rate'])
+        lr_schedule = linear_schedule(float(cfg['ppo']['learning_rate']))
+
+        tensorboard_log_dir = cfg['logging']['tensorboard_log']
+        if tensorboard_log_dir is not None:
+            tensorboard_log_dir = str(tensorboard_log_dir)
 
         if latest_checkpoint:
             logger.info(f"Resuming training from checkpoint: {latest_checkpoint}")
@@ -200,35 +207,35 @@ def train():
                 env=env,
                 device=requested_device,
                 learning_rate=lr_schedule,
-                tensorboard_log=cfg['logging']['tensorboard_log']
+                tensorboard_log=tensorboard_log_dir
             )
         else:
             model = PPO(
-                policy=cfg['ppo']['policy'],
+                policy=str(cfg['ppo']['policy']),
                 env=env,
-                n_steps=cfg['ppo']['n_steps'],
+                n_steps=int(cfg['ppo']['n_steps']),
                 batch_size=BATCH_SIZE,
-                n_epochs=cfg['ppo']['epochs'],
+                n_epochs=int(cfg['ppo']['epochs']),
                 learning_rate=lr_schedule,
-                clip_range=cfg['ppo'].get('clip_range', 0.2),
-                verbose=cfg['ppo']['verbose'],
-                tensorboard_log=cfg['logging']['tensorboard_log']
+                clip_range=float(cfg['ppo'].get('clip_range', 0.2)),
+                verbose=int(cfg['ppo']['verbose']),
+                tensorboard_log=tensorboard_log_dir
             )
         
         # 5. Callbacks
         timestamp = create_timestamp()
         metadata = {
             "n_envs": N_ENVS,
-            "architecture": cfg['model']['detector_name'],
+            "architecture": detector_name_str,
             "timestamp": timestamp,
             "config": cfg,
             "total_timesteps": TOTAL_TIMESTEPS,
             "resumed_from": latest_checkpoint
         }
         reward_callback = RewardLoggerCallback(
-            check_freq=cfg['logging']['reward_log_freq'], 
+            check_freq=int(cfg['logging']['reward_log_freq']), 
             id=timestamp, 
-            log_dir=cfg['logging']['log_dir']
+            log_dir=str(cfg['logging']['log_dir'])
         )
         wandb_callback = WandbAudioCallback(config=metadata)
         lr_callback = LearningRateLoggerCallback(verbose=1)
@@ -236,17 +243,17 @@ def train():
         # Entropy Decay: From exploration to exploitation
         entropy_cfg = cfg['ppo'].get('entropy', {'initial': 0.01, 'final': 0.001})
         entropy_callback = EntropyDecayCallback(
-            initial_ent_coef=entropy_cfg['initial'], 
-            final_ent_coef=entropy_cfg['final'], 
+            initial_ent_coef=float(entropy_cfg['initial']), 
+            final_ent_coef=float(entropy_cfg['final']), 
             total_timesteps=TOTAL_TIMESTEPS
         )
 
         # Checkpoint Callback
-        save_freq_steps = checkpoint_cfg.get('save_freq', 1) * TOTAL_ROLLOUT_BUFFER
+        save_freq_steps = int(checkpoint_cfg.get('save_freq', 1)) * TOTAL_ROLLOUT_BUFFER
         checkpoint_callback = CheckpointCallback(
             save_freq=max(1, save_freq_steps),
-            save_path=checkpoint_cfg.get('save_path', "outputs/checkpoints/"),
-            name_prefix=checkpoint_cfg.get('name_prefix', "kon_artist_ppo")
+            save_path=str(checkpoint_cfg.get('save_path', "outputs/checkpoints/")),
+            name_prefix=str(checkpoint_cfg.get('name_prefix', "kon_artist_ppo"))
         )
         
         # 6. Training Execution
@@ -255,16 +262,17 @@ def train():
             logger.info(f"‼️ Target steps ({TOTAL_TIMESTEPS}) reached or exceeded by checkpoint ({completed_steps}). Training complete.")
             return
 
-        estimated_time_s = pending_timesteps * cfg['logging'].get('time_per_step', 0.0)
+        time_per_step = float(cfg['logging'].get('time_per_step', 0.0))
+        estimated_time_s = pending_timesteps * time_per_step
         hours, remainder = divmod(estimated_time_s, 3600)
         minutes, seconds = divmod(remainder, 60)
         
         # Log estimated time based on pending steps to provide a realistic expectation for training duration, especially when resuming from checkpoints.
         if pending_timesteps == TOTAL_TIMESTEPS:
-            logger.info(f"⌛️ Estimated total training time: {int(hours)}h {int(minutes)}m {int(seconds)}s (based on {cfg['logging'].get('time_per_step', 0.0)}s/step)")
+            logger.info(f"⌛️ Estimated total training time: {int(hours)}h {int(minutes)}m {int(seconds)}s (based on {time_per_step}s/step)")
             logger.info(f"Beginning training: TOTAL_TIMESTEPS={TOTAL_TIMESTEPS}, BATCH_TOTAL={TOTAL_ROLLOUT_BUFFER}")
         else:
-            logger.info(f"⌛️ Estimated PENDING training time: {int(hours)}h {int(minutes)}m {int(seconds)}s (based on {cfg['logging'].get('time_per_step', 0.0)}s/step)")
+            logger.info(f"⌛️ Estimated PENDING training time: {int(hours)}h {int(minutes)}m {int(seconds)}s (based on {time_per_step}s/step)")
             logger.info(f"Beginning training: PENDING_STEPS={pending_timesteps}, TARGET_TOTAL={TOTAL_TIMESTEPS}")
             
         start_time = time.time()
@@ -280,7 +288,7 @@ def train():
         logger.info(f"Training finished. Actual average processing time: {actual_time_per_step:.5f}s/step")
         
         logger.info("Saving model.")
-        model_path = os.path.join(cfg['logging']['log_dir'], "kon_artist_agent")
+        model_path = os.path.join(str(cfg['logging']['log_dir']), "kon_artist_agent")
         model.save(model_path)
 
     except Exception:
