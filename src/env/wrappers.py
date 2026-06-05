@@ -60,6 +60,14 @@ class VecDetectorWrapper(VecEnvWrapper):
         
         # Initialize step counter from completed_steps to maintain global progress on resume
         self.total_steps = self.config.get('ppo', {}).get('completed_steps', 0) 
+        
+        # Load Cluster Biases (Translation Matrix)
+        biasing_cfg = self.config.get('ppo', {}).get('biasing', {})
+        self.cluster_biases = None
+        if biasing_cfg.get('enabled', False) and 'cluster_biases' in biasing_cfg:
+            self.cluster_biases = biasing_cfg['cluster_biases']
+            logger.info("Cluster-Conditioned Biasing matrix loaded in environment.")
+        self.current_clusters = None
 
     def _get_conditioned_observations(self, embeddings):
         """
@@ -83,7 +91,26 @@ class VecDetectorWrapper(VecEnvWrapper):
         waveform = torch.from_numpy(obs).unsqueeze(1).float() # [N, 1, L]
         
         _, embeddings = self.detector.get_score_and_embedding(waveform)
-        return self._get_conditioned_observations(embeddings)
+        cond_obs = self._get_conditioned_observations(embeddings)
+        
+        if self.clustering_config is not None:
+            self.current_clusters = np.argmax(cond_obs[:, 160:], axis=1)
+            
+        return cond_obs
+
+    def step_async(self, actions: np.ndarray) -> None:
+        """Override step_async to apply cluster-conditioned biasing before passing to base envs."""
+        if self.cluster_biases is not None and self.current_clusters is not None:
+            biased_actions = np.copy(actions)
+            for i, cluster_id in enumerate(self.current_clusters):
+                cluster_key = str(cluster_id)
+                # Apply specific bias if found, else fallback to default 'all' if present
+                bias = self.cluster_biases.get(cluster_key, self.cluster_biases.get('all'))
+                if bias is not None:
+                    biased_actions[i] = np.clip(biased_actions[i] + np.array(bias), -1.0, 1.0)
+            self.venv.step_async(biased_actions)
+        else:
+            self.venv.step_async(actions)
 
     def step_wait(self):
         """Batched step wait for all environments."""
@@ -168,6 +195,10 @@ class VecDetectorWrapper(VecEnvWrapper):
             infos[i]['terminated'] = terminated
             if c_id is not None:
                 infos[i]['cluster_id'] = int(c_id)
+                
+        # Update current clusters for the next step_async call
+        if cluster_ids is not None:
+            self.current_clusters = cluster_ids[:self.num_envs]
             
         # Return conditioned embeddings of current observations [0:num_envs]
         return all_conditioned_obs[:self.num_envs], np.array(new_rewards), np.array(new_dones), infos

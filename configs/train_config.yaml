@@ -16,8 +16,13 @@ ppo:
   bonus_amount: 75.0 # Multiplier for the continuous reward bonus
   biasing:
     enabled: True
+    # Cluster-Conditioned Translation Matrix
     # [jitter, shimmer, tilt, harmonics, threshold, ratio, bitrate]
-    target_signature: [-1.0, -1.0, -0.7, -0.3, 0.0, -1.0, 1.0] # Based on longest training (20260601_135618)
+    cluster_biases:
+      # Specific signature discovered for Cluster 5 to achieve peak evasion (0.1174)
+      '5': [0.31, -1.0, -0.91, 0.83, 1.0, -1.0, 1.0] 
+      # Elite strategy baseline for all other clusters (minimizing jitter/shimmer, max bitrate, min ratio)
+      'all': [-1.0, -1.0, -0.7, -0.3, 0.0, -1.0, 1.0]
   policy: "MlpPolicy"
   verbose: 1
 
