@@ -62,12 +62,12 @@ class VecDetectorWrapper(VecEnvWrapper):
         self.total_steps = self.config.get('ppo', {}).get('completed_steps', 0) 
         
         # Load Cluster Biases (Translation Matrix)
-        biasing_cfg = self.config.get('ppo', {}).get('biasing', {})
-        self.cluster_biases = None
-        if biasing_cfg.get('enabled', False) and 'cluster_biases' in biasing_cfg:
-            self.cluster_biases = biasing_cfg['cluster_biases']
-            logger.info("Cluster-Conditioned Biasing matrix loaded in environment.")
-        self.current_clusters = None
+        self.bias_matrix = None
+        if self.clustering_config and "cluster_biases" in self.clustering_config:
+            self.bias_matrix = np.array(self.clustering_config["cluster_biases"], dtype=np.float32)
+            logger.info(f"Cluster-Conditioned Translation Matrix loaded. Shape: {self.bias_matrix.shape}")
+            
+        self.current_cluster_probs = None
 
     def _get_conditioned_observations(self, embeddings):
         """
@@ -78,7 +78,7 @@ class VecDetectorWrapper(VecEnvWrapper):
             
         # Pipeline is now eagerly loaded in __init__
         embeddings_np = embeddings.cpu().numpy()
-        cluster_probs = self.clustering_pipeline.predict_proba(embeddings_np)
+        cluster_probs = self.clustering_pipeline.predict_proba(embeddings_np).astype(np.float32)
         
         # Concatenate and cast to float32
         unified_obs = np.concatenate([embeddings_np, cluster_probs], axis=1)
@@ -94,23 +94,22 @@ class VecDetectorWrapper(VecEnvWrapper):
         cond_obs = self._get_conditioned_observations(embeddings)
         
         if self.clustering_config is not None:
-            self.current_clusters = np.argmax(cond_obs[:, 160:], axis=1)
+            # Store probabilities for step_async biasing [N, K]
+            self.current_cluster_probs = cond_obs[:, 160:].astype(np.float32)
             
-        return cond_obs
+        return cond_obs.astype(np.float32)
 
     def step_async(self, actions: np.ndarray) -> None:
         """Override step_async to apply cluster-conditioned biasing before passing to base envs."""
-        if self.cluster_biases is not None and self.current_clusters is not None:
-            biased_actions = np.copy(actions)
-            for i, cluster_id in enumerate(self.current_clusters):
-                cluster_key = str(cluster_id)
-                # Apply specific bias if found, else fallback to default 'all' if present
-                bias = self.cluster_biases.get(cluster_key, self.cluster_biases.get('all'))
-                if bias is not None:
-                    biased_actions[i] = np.clip(biased_actions[i] + np.array(bias), -1.0, 1.0)
+        if self.bias_matrix is not None and self.current_cluster_probs is not None:
+            # BATCH TRANSLATION MATRIX MATH
+            # actions: [N, Action_Dim], cluster_probs: [N, K], bias_matrix: [K, Action_Dim]
+            # Dynamic bias = P @ B
+            dynamic_biases = np.matmul(self.current_cluster_probs, self.bias_matrix).astype(np.float32)
+            biased_actions = np.clip(actions + dynamic_biases, -1.0, 1.0).astype(np.float32)
             self.venv.step_async(biased_actions)
         else:
-            self.venv.step_async(actions)
+            self.venv.step_async(actions.astype(np.float32))
 
     def step_wait(self):
         """Batched step wait for all environments."""
@@ -137,15 +136,14 @@ class VecDetectorWrapper(VecEnvWrapper):
         # Process conditioned observations (batch)
         all_conditioned_obs = self._get_conditioned_observations(embeddings)
         
-        # Extract dominant cluster assignments for logging [Total_InFERENCE_Size]
-        cluster_ids = None
+        # Extract cluster probabilities [Total_InFERENCE_Size, K]
+        all_cluster_probs = None
         if self.clustering_config is not None:
-            # Probabilities are stored from index 160 onwards
-            cluster_probs = all_conditioned_obs[:, 160:]
-            cluster_ids = np.argmax(cluster_probs, axis=1)
+            all_cluster_probs = all_conditioned_obs[:, 160:].astype(np.float32)
             
             # Periodically log cluster distribution for diagnostic transparency
             if self.total_steps % 100 == 0:
+                cluster_ids = np.argmax(all_cluster_probs, axis=1)
                 unique, counts = np.unique(cluster_ids, return_counts=True)
                 dist = dict(zip(unique, counts))
                 logger.info(f"Batch Cluster Distribution: {dist}")
@@ -160,11 +158,11 @@ class VecDetectorWrapper(VecEnvWrapper):
                 idx = terminal_map[i]
                 score = scores[idx]
                 # Replace terminal raw audio with conditioned embedding to prevent crash in SB3
-                infos[i]["terminal_observation"] = all_conditioned_obs[idx]
-                c_id = cluster_ids[idx] if cluster_ids is not None else None
+                infos[i]["terminal_observation"] = all_conditioned_obs[idx].astype(np.float32)
+                c_probs = all_cluster_probs[idx] if all_cluster_probs is not None else None
             else:
                 score = scores[i]
-                c_id = cluster_ids[i] if cluster_ids is not None else None
+                c_probs = all_cluster_probs[i] if all_cluster_probs is not None else None
             
             # Extract worker-specific info for logging
             self.current_worker = infos[i].get('worker_id', 'N/A')
@@ -176,9 +174,9 @@ class VecDetectorWrapper(VecEnvWrapper):
             dsp_params = infos[i].get('dsp_params', None)
             
             # Compute reward and check for termination based on the CORRECT score and cluster
-            reward, terminated, bonus = compute_attack_reward(score, self, dsp_params=dsp_params, cluster_id=c_id)
+            reward, terminated, bonus = compute_attack_reward(score, self, dsp_params=dsp_params, cluster_probs=c_probs)
             
-            new_rewards.append(reward)
+            new_rewards.append(float(reward))
             # SB3 VecEnv handles 'dones' (terminated or truncated)
             # We add our own 'terminated' condition from the detector
             is_done = dones[i] or terminated
@@ -186,19 +184,19 @@ class VecDetectorWrapper(VecEnvWrapper):
             
             # If the episode ended (either in worker or here), ensure terminal_observation exists
             if is_done and "terminal_observation" not in infos[i]:
-                infos[i]["terminal_observation"] = all_conditioned_obs[i]
+                infos[i]["terminal_observation"] = all_conditioned_obs[i].astype(np.float32)
 
             # Update info dictionaries with actual detector results
             infos[i]['score'] = float(score)
-            infos[i]['reward'] = reward
+            infos[i]['reward'] = float(reward)
             infos[i]['bonus'] = bonus
             infos[i]['terminated'] = terminated
-            if c_id is not None:
-                infos[i]['cluster_id'] = int(c_id)
+            if c_probs is not None:
+                infos[i]['cluster_id'] = int(np.argmax(c_probs))
                 
-        # Update current clusters for the next step_async call
-        if cluster_ids is not None:
-            self.current_clusters = cluster_ids[:self.num_envs]
+        # Update current clusters probabilities for the next step_async call [N_ENVS, K]
+        if all_cluster_probs is not None:
+            self.current_cluster_probs = all_cluster_probs[:self.num_envs].astype(np.float32)
             
         # Return conditioned embeddings of current observations [0:num_envs]
-        return all_conditioned_obs[:self.num_envs], np.array(new_rewards), np.array(new_dones), infos
+        return all_conditioned_obs[:self.num_envs].astype(np.float32), np.array(new_rewards, dtype=np.float32), np.array(new_dones), infos

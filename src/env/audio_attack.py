@@ -104,7 +104,8 @@ class AudioAttackEnv(gym.Env):
         else:
             embedding_np = np.array(baseline_embedding).reshape(1, -1)
             
-        cluster_probabilities = self.clustering_pipeline.predict_proba(embedding_np).flatten()
+        cluster_probabilities = self.clustering_pipeline.predict_proba(embedding_np).flatten().astype(np.float32)
+        self.current_cluster_probs = cluster_probabilities # Update current probabilities for biasing
         unified_observation = np.concatenate([embedding_np.flatten(), cluster_probabilities])
         
         return unified_observation.astype(np.float32)
@@ -146,9 +147,23 @@ class AudioAttackEnv(gym.Env):
         # Increment the internal step counter for episode management
         self.current_step += 1
         
+        # B) CLUSTER-CONDITIONED ACTION BIASING
+        # Intercept raw action and apply translation matrix
+        biased_action = np.copy(action).astype(np.float32)
+        cluster_probs = None
+        if self.clustering_config and hasattr(self, "current_cluster_probs"):
+            biases = self.clustering_config.get("cluster_biases")
+            if biases is not None:
+                # biases shape: [K, Action_Dim]
+                bias_matrix = np.array(biases, dtype=np.float32)
+                # Compute dynamic bias: dot product of probs and matrix
+                dynamic_bias = np.dot(self.current_cluster_probs, bias_matrix)
+                biased_action = np.clip(biased_action + dynamic_bias, -1.0, 1.0).astype(np.float32)
+                logger.debug(f"Action Biased: {action} -> {biased_action} (Bias: {dynamic_bias})")
+
         # 1. Apply DSP transformations
-        logger.debug(f"Action received: {action}") # Debugging statement to trace actions
-        self.last_dsp_params = self._denormalize(action)
+        logger.debug(f"Action received: {biased_action}") # Debugging statement to trace actions
+        self.last_dsp_params = self._denormalize(biased_action)
         logger.debug(f"Denormalized DSP parameters: {self.last_dsp_params}") # Debugging statement to trace DSP parameters
 
         # Process the current audio with the DSP pipeline using the denormalized parameters
@@ -181,18 +196,19 @@ class AudioAttackEnv(gym.Env):
         
         if self.clustering_config:
             obs = self._get_conditioned_observation(embedding)
-            cluster_id = int(np.argmax(obs[160:]))
+            cluster_probs = obs[160:]
+            self.current_cluster_probs = cluster_probs # Store for next step biasing
         else:
             obs = self._get_obs(embedding) # Observation: The embedding from AASIST3 (160-dim)
-            cluster_id = None
+            cluster_probs = None
                 
         # 3. Compute reward and check for termination
-        reward, terminated, bonus = compute_attack_reward(score, self, cluster_id=cluster_id) # Centralized call ensures logic parity with non-vectorized env
+        reward, terminated, bonus = compute_attack_reward(score, self, cluster_probs=cluster_probs) # Centralized call ensures logic parity with non-vectorized env
 
         # Collect info for logging and analysis
         info = {
             'score': float(score),
-            'reward': reward,
+            'reward': float(reward),
             'bonus': int(bonus),
             'dsp_params': self.last_dsp_params,
             'terminated': terminated,
@@ -200,10 +216,10 @@ class AudioAttackEnv(gym.Env):
             'worker_id': self.rank,
             'seed': self.seed
         }
-        if cluster_id is not None:
-            info['cluster_id'] = cluster_id
+        if cluster_probs is not None:
+            info['cluster_id'] = int(np.argmax(cluster_probs))
 
-        return obs, reward, terminated, truncated, info
+        return obs.astype(np.float32), float(reward), terminated, truncated, info
     
     
     def reset(self, seed=None, options=None):
@@ -255,11 +271,12 @@ class AudioAttackEnv(gym.Env):
         
         if self.clustering_config:
             obs = self._get_conditioned_observation(embeddings[0])
-            cluster_id = int(np.argmax(obs[160:]))
+            self.current_cluster_probs = obs[160:]
+            cluster_id = int(np.argmax(self.current_cluster_probs))
             info['cluster_id'] = cluster_id
         else:
             obs = self._get_obs(embeddings[0]) # Observation: The embedding from AASIST3 (160-dim)
 
         info.update({'score': float(score), 'label': target_label})
-        return obs, info
+        return obs.astype(np.float32), info
     

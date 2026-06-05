@@ -4,25 +4,16 @@
 # PPO Hyperparameters
 ppo:
   total_updates: 10 # Total number of PPO updates (each update processes N_STEPS)
-  n_steps: 8192 # 2048 is PPO's default rollout buffer size; adjust if using a custom buffer implementation
-  epochs: 15 # Number of epochs per PPO update (default is 4 in stable-baselines3)
-  batch_size: 256 # Batch size for PPO updates (default is 64 in stable-baselines3, but can be adjusted based on memory constraints)
-  clip_range: 0.3 # PPO clipping parameter (default is 0.2, but can be adjusted for stability)
-  learning_rate: 0.0001 # Learning rate for PPO optimizer (default is 0.0003 in stable-baselines3)
+  n_steps: 2048 # 2048 is PPO's default rollout buffer size; adjust if using a custom buffer implementation
+  epochs: 4 # Number of epochs per PPO update (default is 4 in stable-baselines3)
+  batch_size: 2048 # Batch size for PPO updates (default is 64 in stable-baselines3, but can be adjusted based on memory constraints)
+  clip_range: 0.15 # PPO clipping parameter (default is 0.2, but can be adjusted for stability)
+  learning_rate: 0.0002 # Learning rate for PPO optimizer (default is 0.0003 in stable-baselines3)
   entropy:
-    initial: 0.1 # Initial entropy coefficient (encourages exploration)
-    final: 0.005  # Final entropy coefficient (can be decayed over time to encourage exploitation)
+    initial: 0.15 # Initial entropy coefficient (encourages exploration)
+    final: 0.01  # Final entropy coefficient (can be decayed over time to encourage exploitation)
   bonus: True # Whether to use a reward bonus for successful episodes (can be adjusted based on task requirements)
   bonus_amount: 75.0 # Multiplier for the continuous reward bonus
-  biasing:
-    enabled: True
-    # Cluster-Conditioned Translation Matrix
-    # [jitter, shimmer, tilt, harmonics, threshold, ratio, bitrate]
-    cluster_biases:
-      # Specific signature discovered for Cluster 5 to achieve peak evasion (0.1174)
-      '5': [0.31, -1.0, -0.91, 0.83, 1.0, -1.0, 1.0] 
-      # Elite strategy baseline for all other clusters (minimizing jitter/shimmer, max bitrate, min ratio)
-      'all': [-1.0, -1.0, -0.7, -0.3, 0.0, -1.0, 1.0]
   policy: "MlpPolicy"
   verbose: 1
 
@@ -31,7 +22,7 @@ env:
   n_envs: -1 # -1 means auto-scale based on CPU cores (All cores - 1)
   seed: 42
   success_threshold: 0.5 # Threshold for considering an episode successful (based on reward)
-  step_limit: 10  # Maximum steps per episode to prevent infinite loops (can be adjusted based on task complexity)
+  step_limit: 10  # Maximum steps per episode to prevent infinite loops (can be adjusted based on task complexity. Max 25550)
 
 # Audio Data Settings
 audio:
@@ -40,7 +31,43 @@ audio:
 
 # Acoustic Clustering Settings
 clustering:
+  pca_components: 32
+  n_components: 10
   model_path: "models/gmm_registry.pkl"
+  
+  # A) Cluster Inverse Frequencies (Based on Empirical Footprint Shares)
+  # Lower share = Higher reward multiplier to combat minority starvation
+  inverse_frequency_multipliers:
+    0: 10.0  # 1.8% share
+    1: 1.5   # 17.2% share
+    2: 1.0   # 31.9% share (Dominant base)
+    3: 15.0  # 0.7% share
+    4: 3.0   # 6.8% share
+    5: 4.5   # 4.8% share
+    6: 1.8   # 14.4% share
+    7: 1.2   # 18.6% share
+    8: 5.5   # 3.6% share
+    9: 50.0  # 0.03% share
+
+  # B) Cluster-Conditioned Translation Matrix
+  # Default starting signature [jitter, shimmer, tilt, harmonics, threshold, ratio, bitrate] per cluster
+  cluster_biases:
+    - [-1.0, -1.0, -0.7, -0.3, 0.0, -1.0, 1.0] # Cluster 0
+    - [-1.0, -1.0, -0.7, -0.3, 0.0, -1.0, 1.0] # Cluster 1
+    - [-1.0, -1.0, -0.7, -0.3, 0.0, -1.0, 1.0] # Cluster 2
+    - [-1.0, -1.0, -0.7, -0.3, 0.0, -1.0, 1.0] # Cluster 3
+    - [-1.0, -1.0, -0.7, -0.3, 0.0, -1.0, 1.0] # Cluster 4
+    - [-1.0, -1.0, -0.7, -0.3, 0.0, -1.0, 1.0] # Cluster 5
+    - [-1.0, -1.0, -0.7, -0.3, 0.0, -1.0, 1.0] # Cluster 6
+    - [-1.0, -1.0, -0.7, -0.3, 0.0, -1.0, 1.0] # Cluster 7
+    - [-1.0, -1.0, -0.7, -0.3, 0.0, -1.0, 1.0] # Cluster 8
+    - [-1.0, -1.0, -0.7, -0.3, 0.0, -1.0, 1.0] # Cluster 9
+
+  # C) Auxiliary Reward Shaping Configuration
+  auxiliary_reward:
+    enabled: true
+    stagnation_penalty: -5.0 # Applied if AASIST3 score remains exactly 0.0000
+    fidelity_weight: 2.0     # Penalty multiplier for straying from Hi-Fi parameters
 
 # Model Settings
 model:
