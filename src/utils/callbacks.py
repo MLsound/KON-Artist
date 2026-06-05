@@ -36,7 +36,7 @@ class RewardLoggerCallback(BaseCallback):
         """Initialize the CSV file with headers at the start of training."""
         with open(self.save_path, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['step', 'reward', 'score', 'bonus', 'dsp_jitter', 'dsp_shimmer', 'dsp_tilt', 'dsp_harmonics', 'dsp_threshold', 'dsp_ratio', 'dsp_bitrate'])
+            writer.writerow(['step', 'reward', 'score', 'bonus', 'cluster', 'dsp_jitter', 'dsp_shimmer', 'dsp_tilt', 'dsp_harmonics', 'dsp_threshold', 'dsp_ratio', 'dsp_bitrate'])
         logger.info(f"Reward, Score, Bonus and DSP logging started at: {self.save_path}")
 
     def _on_step(self) -> bool:
@@ -55,6 +55,7 @@ class RewardLoggerCallback(BaseCallback):
                         reward = info["reward"]
                         score = info["score"]
                         bonus = info["bonus"]
+                        cluster = info.get("cluster_id", "")
                         dsp = info.get("dsp_params", {})
                         
                         writer.writerow([
@@ -62,6 +63,7 @@ class RewardLoggerCallback(BaseCallback):
                             reward, 
                             score, 
                             bonus,
+                            cluster,
                             dsp.get("jitter", ""),
                             dsp.get("shimmer", ""),
                             dsp.get("tilt", ""),

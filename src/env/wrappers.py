@@ -49,8 +49,8 @@ class VecDetectorWrapper(VecEnvWrapper):
                 logger.info(f"Clustering enabled for VecDetectorWrapper. Clusters detected: {n_clusters}")
             except (FileNotFoundError, KeyError) as e:
                 logger.error(f"Failed to load clustering pipeline: {e}")
-                # Fallback to config value or default if file missing
-                obs_dim += self.clustering_config.get('n_components', 4)
+                # Fallback to 4 clusters if model is missing
+                obs_dim += 4
             
         # Override observation space to be the embedding space (+ clustering context)
         self.observation_space = gym.spaces.Box(

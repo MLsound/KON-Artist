@@ -3,7 +3,7 @@
 
 # PPO Hyperparameters
 ppo:
-  total_updates: 10 # Total number of PPO updates (each update processes N_STEPS)
+  total_updates: 20 # Total number of PPO updates (each update processes N_STEPS)
   n_steps: 4096 # 2048 is PPO's default rollout buffer size; adjust if using a custom buffer implementation
   epochs: 15 # Number of epochs per PPO update (default is 4 in stable-baselines3)
   batch_size: 256 # Batch size for PPO updates (default is 64 in stable-baselines3, but can be adjusted based on memory constraints)
@@ -15,7 +15,7 @@ ppo:
   bonus: True # Whether to use a reward bonus for successful episodes (can be adjusted based on task requirements)
   bonus_amount: 50.0 # Multiplier for the continuous reward bonus
   biasing:
-    enabled: True
+    enabled: False
     # [jitter, shimmer, tilt, harmonics, threshold, ratio, bitrate]
     target_signature: [-1.0, -1.0, -0.7, -0.3, 0.0, -1.0, 1.0] # Based on longest training (20260601_135618)
   policy: "MlpPolicy"
@@ -35,8 +35,6 @@ audio:
 
 # Acoustic Clustering Settings
 clustering:
-  pca_components: 32
-  n_components: 4
   model_path: "models/gmm_registry.pkl"
 
 # Model Settings

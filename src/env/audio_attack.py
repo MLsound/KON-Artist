@@ -64,7 +64,8 @@ class AudioAttackEnv(gym.Env):
                             pipe = pickle.load(f)
                             obs_dim += pipe.named_steps['gmm'].n_components
                 except (FileNotFoundError, KeyError):
-                    obs_dim += self.clustering_config.get('n_components', 4)
+                    # Fallback to 4 clusters if model is missing
+                    obs_dim += 4
             self.observation_space = gym.spaces.Box(low=-1e5, high=1e5, shape=(obs_dim,), dtype=np.float32)
         else:
             # Fixed AASIST3 length: 64600 samples
