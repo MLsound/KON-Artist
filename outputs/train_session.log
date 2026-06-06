@@ -1,0 +1,57 @@
+[2026-06-06 20:02:44] INFO [train:90] PPO Configuration: RolloutBuffer=14336, MiniBatch=2048, TotalSteps=143360
+[2026-06-06 20:02:45] WARNING [aasist:82] Could not find out_layer for embeddings; state might be None.
+[2026-06-06 20:02:45] INFO [aasist:39] AASIST3 model loaded on cpu
+[2026-06-06 20:02:45] INFO [aasist:39] AASIST3 model loaded on cpu
+[2026-06-06 20:02:45] WARNING [aasist:82] Could not find out_layer for embeddings; state might be None.
+[2026-06-06 20:02:45] INFO [aasist:39] AASIST3 model loaded on cpu
+[2026-06-06 20:02:45] INFO [audio_attack:250] Environment Reset: Loading new sample (Label: Spoof)
+[2026-06-06 20:02:45] INFO [reward_logic:124] --- ATTACK SUCCESSFUL: Score 0.9500 ---
+[2026-06-06 20:02:45] INFO [reward_logic:128] Worker N/A | Step 1 | Score: 0.9500 | Reward: 262.45 | Bonus: 237.50 | DSP: {'jitter': 0.0, 'shimmer': 0.0, 'tilt': 0.0, 'harmonics': 0.0, 'threshold': -40.0, 'ratio': 6.0, 'bitrate': 96000} 
+[2026-06-06 20:02:45] INFO [callbacks:40] Reward, Score, Bonus and DSP logging started at: /private/var/folders/83/9353kc_5517028y13dxby8y40000gn/T/pytest-of-alejandrolloveras/pytest-26/test_reward_logger_file_creati0/logs/history/rewards_test.csv
+[2026-06-06 20:02:45] INFO [callbacks:40] Reward, Score, Bonus and DSP logging started at: /private/var/folders/83/9353kc_5517028y13dxby8y40000gn/T/pytest-of-alejandrolloveras/pytest-26/test_reward_logger_on_step0/logs/history/rewards_test.csv
+[2026-06-06 20:02:46] INFO [audio_attack:250] Environment Reset: Loading new sample (Label: Spoof)
+[2026-06-06 20:02:46] INFO [reward_logic:124] --- ATTACK SUCCESSFUL: Score 0.5128 ---
+[2026-06-06 20:02:46] INFO [reward_logic:128] Worker N/A | Step 1 | Score: 0.5128 | Reward: 152.54 | Bonus: 128.21 | DSP: {'jitter': 0.4055404, 'shimmer': -0.365185, 'tilt': -0.9984586, 'harmonics': 0.37499788, 'threshold': -45.295586585998535, 'ratio': 9.601956367492676, 'bitrate': 120917} 
+[2026-06-06 20:02:46] INFO [reward_logic:128] Worker N/A | Step 2 | Score: 0.1769 | Reward: 67.50 | Bonus: 44.23 | DSP: Batched 
+[2026-06-06 20:02:46] INFO [reward_logic:124] --- ATTACK SUCCESSFUL: Score 0.9450 ---
+[2026-06-06 20:02:46] INFO [reward_logic:128] Worker N/A | Step 2 | Score: 0.9450 | Reward: 261.19 | Bonus: 236.25 | DSP: Batched 
+[2026-06-06 20:02:46] INFO [audio_attack:250] Environment Reset: Loading new sample (Label: Spoof)
+[2026-06-06 20:02:46] INFO [audio_attack:250] Environment Reset: Loading new sample (Label: Spoof)
+[2026-06-06 20:02:46] INFO [reward_logic:124] --- ATTACK SUCCESSFUL: Score 0.9500 ---
+[2026-06-06 20:02:46] INFO [reward_logic:128] Worker N/A | Step 1 | Score: 0.9500 | Reward: 262.45 | Bonus: 237.50 | DSP: {'jitter': 0.0, 'shimmer': 0.0, 'tilt': 0.0, 'harmonics': 0.0, 'threshold': -40.0, 'ratio': 6.0, 'bitrate': 96000} 
+[2026-06-06 20:02:46] INFO [audio_attack:250] Environment Reset: Loading new sample (Label: Spoof)
+[2026-06-06 20:02:46] INFO [reward_logic:124] --- ATTACK SUCCESSFUL: Score 0.9000 ---
+[2026-06-06 20:02:46] INFO [reward_logic:128] Worker 0 | Step 1 | Score: 0.9000 | Reward: 249.89 | Bonus: 225.00 | DSP: {'jitter': 0.0, 'shimmer': 0.0, 'tilt': 0.0, 'harmonics': 0.0, 'threshold': -40.0, 'ratio': 6.0, 'bitrate': 96000} 
+[2026-06-06 20:02:46] WARNING [aasist:82] Could not find out_layer for embeddings; state might be None.
+[2026-06-06 20:02:46] INFO [aasist:39] AASIST3 model loaded on cpu
+[2026-06-06 20:02:47] WARNING [aasist:82] Could not find out_layer for embeddings; state might be None.
+[2026-06-06 20:02:47] INFO [aasist:39] AASIST3 model loaded on cpu
+[2026-06-06 20:02:47] INFO [audio_attack:250] Environment Reset: Loading new sample (Label: Spoof)
+[2026-06-06 20:02:47] INFO [reward_logic:128] Worker N/A | Step 1 | Score: 0.3100 | Reward: 101.34 | Bonus: 77.51 | DSP: {'jitter': 0.5, 'shimmer': -0.2, 'tilt': 0.0, 'harmonics': 0.1, 'threshold': -50.0, 'ratio': 10.000000059604645, 'bitrate': 32000} 
+[2026-06-06 20:02:47] WARNING [aasist:82] Could not find out_layer for embeddings; state might be None.
+[2026-06-06 20:02:47] INFO [aasist:39] AASIST3 model loaded on cpu
+[2026-06-06 20:02:47] INFO [audio_attack:250] Environment Reset: Loading new sample (Label: Spoof)
+[2026-06-06 20:02:47] INFO [reward_logic:128] Worker N/A | Step 1 | Score: 0.5000 | Reward: 149.31 | Bonus: 125.00 | DSP: {'jitter': 1.0, 'shimmer': 1.0, 'tilt': 1.0, 'harmonics': 1.0, 'threshold': -20.0, 'ratio': 11.0, 'bitrate': 160000} 
+[2026-06-06 20:02:47] INFO [train:125] ===== Starting KON-Artist Training Session =====
+[2026-06-06 20:02:47] INFO [train:127] TOTAL_TIMESTEPS = 10 | N_STEPS = 10 | TOTAL_UPDATES = 1 | EPOCHS = 1 | BATCH = 5
+[2026-06-06 20:02:47] WARNING [train:136] ⚠️ WARNING: CPU execution requested. Training will be significantly slower. Ensure this is intentional. (Go to configs/train_config.yaml to change this setting)
+[2026-06-06 20:02:47] INFO [train:140] Loading MTUCI/AASIST3 model for batched inference.
+[2026-06-06 20:02:47] INFO [train:145] Bonus Reward: ENABLED (Amount: 250.0)
+[2026-06-06 20:02:47] INFO [train:165] Instantiating 1 parallel environments.
+[2026-06-06 20:02:47] INFO [train:173] Wrapping environment with VecDetectorWrapper for GPU batching.
+[2026-06-06 20:02:47] INFO [train:194] Configuring PPO agent.
+[2026-06-06 20:02:47] INFO [train:272] ⌛️ Estimated total training time: 0h 0m 1s (based on 0.1s/step)
+[2026-06-06 20:02:47] INFO [train:273] Beginning training: TOTAL_TIMESTEPS=10, BATCH_TOTAL=10
+[2026-06-06 20:02:47] INFO [train:288] Training finished. Actual average processing time: 0.00003s/step
+[2026-06-06 20:02:47] INFO [train:290] Saving model.
+[2026-06-06 20:02:47] ERROR [train:295] Training failed with a critical error:
+Traceback (most recent call last):
+  File "/Users/alejandrolloveras/Documents/ESTUDIO/UBA/Materias/RL/KON-Artist/scripts/train.py", line 147, in train
+    detector = AASISTWrapper(detector_name_str, device=requested_device)
+  File "/opt/anaconda3/envs/kon-env/lib/python3.10/unittest/mock.py", line 1114, in __call__
+    return self._mock_call(*args, **kwargs)
+  File "/opt/anaconda3/envs/kon-env/lib/python3.10/unittest/mock.py", line 1118, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+  File "/opt/anaconda3/envs/kon-env/lib/python3.10/unittest/mock.py", line 1173, in _execute_mock_call
+    raise effect
+Exception: Model weight error

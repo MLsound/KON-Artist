@@ -1,0 +1,10 @@
+[2026-06-06 20:02:46] INFO [generate_plots:31] Reading data from /private/var/folders/83/9353kc_5517028y13dxby8y40000gn/T/pytest-of-alejandrolloveras/pytest-26/test_generate_plot_success0/test_rewards.csv...
+[2026-06-06 20:02:46] INFO [generate_plots:35] Generating plot for training session: test_rewards
+[2026-06-06 20:02:46] INFO [generate_plots:74] Plot saved successfully at: /private/var/folders/83/9353kc_5517028y13dxby8y40000gn/T/pytest-of-alejandrolloveras/pytest-26/test_generate_plot_success0/convergence_test_rewards.png
+[2026-06-06 20:02:46] ERROR [generate_plots:28] Data file not found at: non_existent.csv
+[2026-06-06 20:02:46] INFO [generate_plots:31] Reading data from /private/var/folders/83/9353kc_5517028y13dxby8y40000gn/T/pytest-of-alejandrolloveras/pytest-26/test_generate_plot_empty_data0/empty.csv...
+[2026-06-06 20:02:46] INFO [generate_plots:35] Generating plot for training session: empty
+[2026-06-06 20:02:46] WARNING [generate_plots:43] The CSV file at /private/var/folders/83/9353kc_5517028y13dxby8y40000gn/T/pytest-of-alejandrolloveras/pytest-26/test_generate_plot_empty_data0/empty.csv is empty or contains no parseable columns.
+[2026-06-06 20:02:46] INFO [generate_plots:31] Reading data from /private/var/folders/83/9353kc_5517028y13dxby8y40000gn/T/pytest-of-alejandrolloveras/pytest-26/test_moving_average_logic0/test_rewards.csv...
+[2026-06-06 20:02:46] INFO [generate_plots:35] Generating plot for training session: test_rewards
+[2026-06-06 20:02:47] INFO [generate_plots:74] Plot saved successfully at: /private/var/folders/83/9353kc_5517028y13dxby8y40000gn/T/pytest-of-alejandrolloveras/pytest-26/test_moving_average_logic0/convergence_test_rewards.png

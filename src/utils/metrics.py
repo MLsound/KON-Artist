@@ -10,32 +10,68 @@ False Acceptance Rate (FAR) and False Rejection Rate (FRR) are equal.
 import numpy as np
 from sklearn.metrics import roc_curve
 
+def compute_det_curve(bonafide_scores, spoof_scores):
+    """
+    Computes FRR and FAR with their thresholds.
+    """
+    all_scores = np.concatenate((bonafide_scores, spoof_scores))
+    labels = np.concatenate((np.ones(bonafide_scores.size), np.zeros(spoof_scores.size)))
+
+    indices = np.argsort(all_scores, kind='mergesort')
+    labels = labels[indices]
+
+    tar_trial_sums = np.cumsum(labels)
+    nontarget_trial_sums = spoof_scores.size - (np.arange(1, all_scores.size + 1) - tar_trial_sums)
+
+    frr = np.concatenate((np.atleast_1d(0), tar_trial_sums / bonafide_scores.size))
+    far = np.concatenate((np.atleast_1d(1), nontarget_trial_sums / spoof_scores.size))
+    thresholds = np.concatenate((np.atleast_1d(all_scores[indices[0]] - 0.001), all_scores[indices]))
+
+    return frr, far, thresholds
+
 def compute_eer(bonafide_scores: np.ndarray, spoof_scores: np.ndarray):
     """
     Calculates the Equal Error Rate (EER) following the ASVspoof standard.
-    
-    The EER is computed by finding the point on the ROC curve where 
-    the False Positive Rate (FPR) and False Negative Rate (FNR) intersect.
     """
-    # Labels: 1 for bonafide, 0 for spoof
-    labels = np.concatenate([np.ones_like(bonafide_scores), np.zeros_like(spoof_scores)])
-    scores = np.concatenate([bonafide_scores, spoof_scores])
+    frr, far, thresholds = compute_det_curve(bonafide_scores, spoof_scores)
+    abs_diffs = np.abs(frr - far)
+    min_index = np.argmin(abs_diffs)
+    eer = np.mean((frr[min_index], far[min_index]))
+    return eer, far, frr, thresholds
+
+def compute_tDCF(bonafide_scores_cm, spoof_scores_cm, 
+                 Pfa_asv=0.0243, Pmiss_asv=0.00, Pmiss_spoof_asv=0.7628):
+    """
+    Computes the Tandem Detection Cost Function (t-DCF) using ASVspoof 2019 LA constants.
     
-    # Generate ROC curve points
-    fpr, tpr, thresholds = roc_curve(labels, scores, pos_label=1)
+    Default ASV error rates are from the 2019 LA evaluation set.
+    """
+    # Official ASVspoof 2019 LA constants
+    cost_model = {
+        'Ptar': 0.9405,
+        'Pnon': 0.0595,
+        'Pspoof': 0.05,
+        'Cmiss_asv': 1.0,
+        'Cfa_asv': 10.0,
+        'Cmiss_cm': 1.0,
+        'Cfa_cm': 10.0
+    }
+
+    Pmiss_cm, Pfa_cm, _ = compute_det_curve(bonafide_scores_cm, spoof_scores_cm)
+
+    # Constants C1 and C2 for the linear combination of CM errors
+    C1 = cost_model['Ptar'] * (cost_model['Cmiss_cm'] - cost_model['Cmiss_asv'] * Pmiss_asv) - \
+         cost_model['Pnon'] * cost_model['Cfa_asv'] * Pfa_asv
+
+    C2 = cost_model['Cfa_cm'] * cost_model['Pspoof'] * (1.0 - Pmiss_spoof_asv)
+
+    # Obtain t-DCF curve for all thresholds
+    tDCF = C1 * Pmiss_cm + C2 * Pfa_cm
+
+    # Normalized t-DCF (min t-DCF is the minimum of this curve)
+    tDCFnorm = tDCF / np.minimum(C1, C2)
     
-    # False Negative Rate (FNR) is 1 - True Positive Rate (TPR)
-    fnr = 1 - tpr
-    
-    # Find the index where the difference between FPR and FNR is minimized
-    idx = np.nanargmin(np.absolute(fnr - fpr))
-    
-    # Calculate EER as the average of FPR and FNR at the crossover point.
-    # This handles edge cases like identical distributions (0.5 EER) correctly.
-    eer = (fpr[idx] + fnr[idx]) / 2
-    eer_threshold = thresholds[idx]
-    
-    return eer, fpr, fnr, thresholds
+    return np.min(tDCFnorm)
 
 def compute_mindcf(frr: np.ndarray, far: np.ndarray, thresholds: np.ndarray, 
                   Pspoof: float = 0.05, Cmiss: float = 1.0, Cfa: float = 10.0):
