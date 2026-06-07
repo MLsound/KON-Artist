@@ -13,19 +13,17 @@ from sklearn.metrics import roc_curve
 def compute_det_curve(bonafide_scores, spoof_scores):
     """
     Computes FRR and FAR with their thresholds.
+    Uses sklearn.metrics.roc_curve for robust tie-handling and standard computation.
     """
     all_scores = np.concatenate((bonafide_scores, spoof_scores))
     labels = np.concatenate((np.ones(bonafide_scores.size), np.zeros(spoof_scores.size)))
 
-    indices = np.argsort(all_scores, kind='mergesort')
-    labels = labels[indices]
-
-    tar_trial_sums = np.cumsum(labels)
-    nontarget_trial_sums = spoof_scores.size - (np.arange(1, all_scores.size + 1) - tar_trial_sums)
-
-    frr = np.concatenate((np.atleast_1d(0), tar_trial_sums / bonafide_scores.size))
-    far = np.concatenate((np.atleast_1d(1), nontarget_trial_sums / spoof_scores.size))
-    thresholds = np.concatenate((np.atleast_1d(all_scores[indices[0]] - 0.001), all_scores[indices]))
+    # roc_curve returns fpr, tpr, thresholds
+    # In detection task:
+    # far (False Acceptance Rate) = fpr
+    # frr (False Rejection Rate) = 1 - tpr
+    far, tpr, thresholds = roc_curve(labels, all_scores, pos_label=1)
+    frr = 1 - tpr
 
     return frr, far, thresholds
 

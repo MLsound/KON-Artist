@@ -105,8 +105,10 @@ class DSPPipeline(torch.nn.Module):
             
         original_shape = x.shape
         # Ensure x is (Batch, Channels, Length) for grid_sample logic
-        if x.dim() == 2:
-            x = x.unsqueeze(0) # Add batch dimension
+        if x.dim() == 1:
+            x = x.unsqueeze(0).unsqueeze(0) # [1, 1, L]
+        elif x.dim() == 2:
+            x = x.unsqueeze(0) # [1, C, L]
             
         batch, channels, length = x.shape
         
