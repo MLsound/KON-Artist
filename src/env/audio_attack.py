@@ -105,6 +105,12 @@ class AudioAttackEnv(gym.Env):
             embedding_np = np.array(baseline_embedding).reshape(1, -1)
             
         cluster_probabilities = self.clustering_pipeline.predict_proba(embedding_np).flatten().astype(np.float32)
+        
+        # Cluster Entropy Sanity Check
+        max_p = float(np.max(cluster_probabilities))
+        if max_p < 0.2:
+            logger.warning(f"WARNING: Vague cluster assignment detected (max prob: {max_p:.2f}). Conditioning may be structurally impossible.")
+            
         self.current_cluster_probs = cluster_probabilities # Update current probabilities for biasing
         unified_observation = np.concatenate([embedding_np.flatten(), cluster_probabilities])
         
