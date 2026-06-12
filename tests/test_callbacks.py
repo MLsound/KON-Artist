@@ -32,7 +32,7 @@ def test_reward_logger_file_creation(tmp_path, mock_model):
     with open(save_path, 'r') as f:
         reader = csv.reader(f)
         header = next(reader)
-        assert header == ['step', 'reward', 'score', 'bonus', 'dsp_jitter', 'dsp_shimmer', 'dsp_tilt', 'dsp_harmonics', 'dsp_threshold', 'dsp_ratio', 'dsp_bitrate']
+        assert header == ['step', 'session_step', 'session_progress_pct', 'reward', 'score', 'bonus', 'dsp_jitter', 'dsp_shimmer', 'dsp_tilt', 'dsp_harmonics', 'dsp_threshold', 'dsp_ratio', 'dsp_bitrate']
 
 def test_reward_logger_on_step(tmp_path, mock_model):
     """Verify that rewards are appended to the CSV during training steps."""
@@ -62,8 +62,10 @@ def test_reward_logger_on_step(tmp_path, mock_model):
         lines = list(csv.reader(f))
         assert len(lines) == 2 # Header + 1 entry
         assert lines[1][0] == '100'
-        assert lines[1][1] == '0.85'
-        assert lines[1][2] == '0.9'
+        assert lines[1][1] == '100'
+        assert lines[1][2] == '0.0'
+        assert lines[1][3] == '0.85'
+        assert lines[1][4] == '0.9'
         
 @patch("wandb.init")
 @patch("wandb.log")

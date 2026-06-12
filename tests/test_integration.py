@@ -27,7 +27,7 @@ def integration_setup(tmp_path):
         # 3. Use side_effect to simulate hook firing
         def mock_forward(x):
             wrapper._embedding = torch.randn(x.shape[0], 160)
-            return torch.tensor([[0.1, 0.9]])
+            return torch.tensor([[0.9, 0.1]])
         mock_model_instance.side_effect = mock_forward
 
         # 4. Load a real audio sample from the dataset

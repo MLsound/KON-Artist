@@ -89,7 +89,7 @@ BATCH_SIZE = min(cfg['ppo']['batch_size'], TOTAL_ROLLOUT_BUFFER) # Ensure batch 
 # Log the actual training configuration for transparency and debugging
 logger.info(f"PPO Configuration: RolloutBuffer={TOTAL_ROLLOUT_BUFFER}, MiniBatch={BATCH_SIZE}, TotalSteps={TOTAL_TIMESTEPS}")
 
-def make_env(rank: int, seed: int = 42, completed_steps: int = 0):
+def make_env(rank: int, seed: int = 42, completed_steps: int = 0, session_total_steps: int = None):
     """
     Utility function for multiprocessed env.
     """
@@ -107,7 +107,9 @@ def make_env(rank: int, seed: int = 42, completed_steps: int = 0):
             audio_config=audio_config, 
             bonus=cfg['ppo'].get('bonus', True), 
             bonus_amount=cfg['ppo'].get('bonus_amount', 250.0),
-            completed_steps=completed_steps
+            completed_steps=completed_steps,
+            initial_checkpoint_steps=completed_steps,
+            session_total_steps=session_total_steps
         )
         # Set environment specific thresholds/limits from config
         env.success_threshold = cfg['env']['success_threshold']
@@ -144,40 +146,55 @@ def train():
 
         detector = AASISTWrapper(cfg['model']['detector_name'], device=requested_device)
         
+        # Initialize learning rate schedule and tensorboard log directory early
+        lr_schedule = linear_schedule(cfg['ppo']['learning_rate'])
+        tensorboard_log_dir = cfg['logging']['tensorboard_log']
+
         # CHECKPOINT DETECTION (Moved early to inform wrappers/logic)
         checkpoint_cfg = cfg['logging'].get('checkpoint', {})
         latest_checkpoint = None
         completed_steps = 0
+        model = None
         if checkpoint_cfg.get('load_last', False):
             latest_checkpoint = get_latest_checkpoint(checkpoint_cfg.get('save_path', "outputs/checkpoints/"))
             if latest_checkpoint:
                 try:
-                    filename = os.path.basename(latest_checkpoint)
-                    completed_steps = int(filename.split('_')[-2])
-                    logger.info(f"Checkpoint detected: {completed_steps} steps already completed.")
-                except (ValueError, IndexError):
-                    logger.warning("Could not extract step count from checkpoint. Starting from 0.")
-        
-        # 2. Initialize Vectorized Environments
-        logger.info(f"Instantiating {N_ENVS} parallel environments.")
-        if N_ENVS > 1:
-            env = SubprocVecEnv([make_env(i, cfg['env']['seed'], completed_steps) for i in range(N_ENVS)])
-        else:
-            env = DummyVecEnv([make_env(0, cfg['env']['seed'], completed_steps)])
+                    # Load PPO checkpoint early to extract genuine completed step count
+                    model = PPO.load(
+                        latest_checkpoint,
+                        device=requested_device,
+                        custom_objects={"learning_rate": lr_schedule},
+                        tensorboard_log=tensorboard_log_dir
+                    )
+                    completed_steps = int(model.num_timesteps)
+                    logger.info(f"Checkpoint detected: {completed_steps} genuine steps already completed.")
+                except Exception as e:
+                    logger.warning(f"Could not load checkpoint early: {e}. Falling back to fresh agent creation.")
+                    latest_checkpoint = None
+                    model = None
 
-        # 3. Wrap for Batched GPU Inference
-        logger.info("Wrapping environment with VecDetectorWrapper for GPU batching.")
-        
         pending_timesteps = TOTAL_TIMESTEPS - completed_steps
         cfg['ppo']['pending_timesteps'] = pending_timesteps
         cfg['ppo']['completed_steps'] = completed_steps
 
+        # 2. Initialize Vectorized Environments
+        logger.info(f"Instantiating {N_ENVS} parallel environments.")
+        if N_ENVS > 1:
+            env = SubprocVecEnv([make_env(i, cfg['env']['seed'], completed_steps, pending_timesteps) for i in range(N_ENVS)])
+        else:
+            env = DummyVecEnv([make_env(0, cfg['env']['seed'], completed_steps, pending_timesteps)])
+
+        # 3. Wrap for Batched GPU Inference
+        logger.info("Wrapping environment with VecDetectorWrapper for GPU batching.")
+        
         env = VecDetectorWrapper(
             env, 
             detector, 
             bonus=cfg['ppo'].get('bonus', True), 
             bonus_amount=cfg['ppo'].get('bonus_amount', 250.0),
-            config=cfg
+            config=cfg,
+            initial_checkpoint_steps=completed_steps,
+            session_total_steps=pending_timesteps
         )
         env.total_timesteps = TOTAL_TIMESTEPS
         env.success_threshold = cfg['env']['success_threshold']
@@ -186,22 +203,12 @@ def train():
         # VecMonitor is required for RewardLoggerCallback to access ep_info_buffer
         env = VecMonitor(env)
 
-        # 5. Agent Instantiation
-        logger.info("Configuring PPO agent.")
-        
-        # Initialize learning rate schedule
-        lr_schedule = linear_schedule(cfg['ppo']['learning_rate'])
-
-        if latest_checkpoint:
+        # 5. Agent Instantiation / Setup
+        if model is not None:
             logger.info(f"Resuming training from checkpoint: {latest_checkpoint}")
-            model = PPO.load(
-                latest_checkpoint, 
-                env=env,
-                device=requested_device,
-                learning_rate=lr_schedule,
-                tensorboard_log=cfg['logging']['tensorboard_log']
-            )
+            model.set_env(env)
         else:
+            logger.info("Configuring PPO agent.")
             model = PPO(
                 policy=cfg['ppo']['policy'],
                 env=env,
@@ -211,7 +218,7 @@ def train():
                 learning_rate=lr_schedule,
                 clip_range=cfg['ppo'].get('clip_range', 0.2),
                 verbose=cfg['ppo']['verbose'],
-                tensorboard_log=cfg['logging']['tensorboard_log']
+                tensorboard_log=tensorboard_log_dir
             )
         
         # 5. Callbacks
@@ -227,17 +234,29 @@ def train():
         reward_callback = RewardLoggerCallback(
             check_freq=cfg['logging']['reward_log_freq'], 
             id=timestamp, 
-            log_dir=cfg['logging']['log_dir']
+            log_dir=cfg['logging']['log_dir'],
+            initial_checkpoint_steps=completed_steps,
+            session_total_steps=pending_timesteps
         )
-        wandb_callback = WandbAudioCallback(config=metadata)
-        lr_callback = LearningRateLoggerCallback(verbose=1)
+        wandb_callback = WandbAudioCallback(
+            config=metadata,
+            initial_checkpoint_steps=completed_steps,
+            session_total_steps=pending_timesteps
+        )
+        lr_callback = LearningRateLoggerCallback(
+            verbose=1,
+            initial_checkpoint_steps=completed_steps,
+            session_total_steps=pending_timesteps
+        )
         
         # Entropy Decay: From exploration to exploitation
         entropy_cfg = cfg['ppo'].get('entropy', {'initial': 0.01, 'final': 0.001})
         entropy_callback = EntropyDecayCallback(
             initial_ent_coef=entropy_cfg['initial'], 
             final_ent_coef=entropy_cfg['final'], 
-            total_timesteps=TOTAL_TIMESTEPS
+            total_timesteps=TOTAL_TIMESTEPS,
+            initial_checkpoint_steps=completed_steps,
+            session_total_steps=pending_timesteps
         )
 
         # Checkpoint Callback
