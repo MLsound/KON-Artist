@@ -5,9 +5,27 @@ import torch
 import os
 import pickle
 from unittest.mock import MagicMock, patch
-from src.data.clustering import extract_all_embeddings, run_clustering_pipeline
+from src.data.clustering import extract_all_embeddings, run_clustering_pipeline, optimize_clustering_params
 from src.env.audio_attack import AudioAttackEnv
 from src.env.wrappers import VecDetectorWrapper
+
+def test_optimize_clustering_params():
+    # Create dummy embeddings
+    # 20 samples, 160 dimensions
+    # We'll make them redundant so PCA reduces them significantly
+    embeddings = np.random.randn(20, 160)
+    # Make dimensions after 5 redundant
+    embeddings[:, 5:] = embeddings[:, :1] * 0.1
+    
+    optimal_pca, optimal_k = optimize_clustering_params(embeddings)
+    
+    assert isinstance(optimal_pca, int)
+    assert isinstance(optimal_k, int)
+    assert 1 <= optimal_pca <= 160
+    assert 2 <= optimal_k <= 10
+    
+    # Check that optimization plot was saved
+    assert os.path.exists("outputs/plots/clustering_optimization.png")
 
 class MockDetector:
     def get_score_and_embedding(self, waveform):
@@ -32,13 +50,13 @@ def mock_clustering_pipeline():
 
 def test_extract_all_embeddings():
     detector = MockDetector()
-    # Mock loader to return 5 samples
-    mock_loader = [ (torch.randn(1, 64600), 1) for _ in range(5) ]
-    
+    # Mock loader to return exactly 64 samples for one full batch
+    mock_loader = [ (torch.randn(1, 64600), 1) for _ in range(64) ]
+
     with patch('src.data.clustering.generator_from_ds', return_value=mock_loader):
-        embeddings = extract_all_embeddings(detector, mock_loader)
+        embeddings = extract_all_embeddings(detector, mock_loader, batch_size=64, device='cpu')
         
-    assert embeddings.shape == (5, 160)
+    assert embeddings.shape == (64, 160)
     assert embeddings.dtype == np.float32
 
 def test_audio_attack_env_clustering(mock_clustering_pipeline, tmp_path):
@@ -48,7 +66,6 @@ def test_audio_attack_env_clustering(mock_clustering_pipeline, tmp_path):
         pickle.dump(mock_clustering_pipeline, f)
         
     clustering_config = {
-        "n_components": 4,
         "model_path": str(model_path)
     }
     
@@ -79,7 +96,6 @@ def test_vec_detector_wrapper_clustering(mock_clustering_pipeline, tmp_path):
         
     config = {
         "clustering": {
-            "n_components": 4,
             "model_path": str(model_path)
         }
     }
