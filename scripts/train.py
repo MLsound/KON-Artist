@@ -89,7 +89,7 @@ BATCH_SIZE = min(int(cfg['ppo']['batch_size']), TOTAL_ROLLOUT_BUFFER) # Ensure b
 # Log the actual training configuration for transparency and debugging
 logger.info(f"PPO Configuration: RolloutBuffer={TOTAL_ROLLOUT_BUFFER}, MiniBatch={BATCH_SIZE}, TotalSteps={TOTAL_TIMESTEPS}")
 
-def make_env(rank: int, seed: int = 42, completed_steps: int = 0):
+def make_env(rank: int, seed: int = 42, completed_steps: int = 0, session_total_steps: int = None):
     """
     Utility function for multiprocessed env.
     """
@@ -108,7 +108,9 @@ def make_env(rank: int, seed: int = 42, completed_steps: int = 0):
             bonus=bool(cfg['ppo'].get('bonus', True)), 
             bonus_amount=float(cfg['ppo'].get('bonus_amount', 250.0)),
             completed_steps=completed_steps,
-            clustering_config=None
+            clustering_config=None,
+            initial_checkpoint_steps=completed_steps,
+            session_total_steps=session_total_steps
         )
         # Set environment specific thresholds/limits from config
         env.success_threshold = float(cfg['env']['success_threshold'])
@@ -176,27 +178,29 @@ def train():
                     latest_checkpoint = None
                     model = None
         
-        # 2. Initialize Vectorized Environments
-        logger.info(f"Instantiating {N_ENVS} parallel environments.")
-        env_seed = int(cfg['env']['seed'])
-        if N_ENVS > 1:
-            env = SubprocVecEnv([make_env(i, env_seed, completed_steps) for i in range(N_ENVS)])
-        else:
-            env = DummyVecEnv([make_env(0, env_seed, completed_steps)])
-
-        # 3. Wrap for Batched GPU Inference
-        logger.info("Wrapping environment with VecDetectorWrapper for GPU batching.")
-        
         pending_timesteps = TOTAL_TIMESTEPS - completed_steps
         cfg['ppo']['pending_timesteps'] = pending_timesteps
         cfg['ppo']['completed_steps'] = completed_steps
 
+        # 2. Initialize Vectorized Environments
+        logger.info(f"Instantiating {N_ENVS} parallel environments.")
+        env_seed = int(cfg['env']['seed'])
+        if N_ENVS > 1:
+            env = SubprocVecEnv([make_env(i, env_seed, completed_steps, pending_timesteps) for i in range(N_ENVS)])
+        else:
+            env = DummyVecEnv([make_env(0, env_seed, completed_steps, pending_timesteps)])
+
+        # 3. Wrap for Batched GPU Inference
+        logger.info("Wrapping environment with VecDetectorWrapper for GPU batching.")
+        
         env = VecDetectorWrapper(
             env, 
             detector, 
             bonus=bonus_enabled, 
             bonus_amount=bonus_amount,
-            config=cfg
+            config=cfg,
+            initial_checkpoint_steps=completed_steps,
+            session_total_steps=pending_timesteps
         )
         env.total_timesteps = TOTAL_TIMESTEPS
         env.success_threshold = float(cfg['env']['success_threshold'])
@@ -236,17 +240,29 @@ def train():
         reward_callback = RewardLoggerCallback(
             check_freq=int(cfg['logging']['reward_log_freq']), 
             id=timestamp, 
-            log_dir=str(cfg['logging']['log_dir'])
+            log_dir=str(cfg['logging']['log_dir']),
+            initial_checkpoint_steps=completed_steps,
+            session_total_steps=pending_timesteps
         )
-        wandb_callback = WandbAudioCallback(config=metadata)
-        lr_callback = LearningRateLoggerCallback(verbose=1)
+        wandb_callback = WandbAudioCallback(
+            config=metadata,
+            initial_checkpoint_steps=completed_steps,
+            session_total_steps=pending_timesteps
+        )
+        lr_callback = LearningRateLoggerCallback(
+            verbose=1,
+            initial_checkpoint_steps=completed_steps,
+            session_total_steps=pending_timesteps
+        )
         
         # Entropy Decay: From exploration to exploitation
         entropy_cfg = cfg['ppo'].get('entropy', {'initial': 0.01, 'final': 0.001})
         entropy_callback = EntropyDecayCallback(
             initial_ent_coef=float(entropy_cfg['initial']), 
             final_ent_coef=float(entropy_cfg['final']), 
-            total_timesteps=TOTAL_TIMESTEPS
+            total_timesteps=TOTAL_TIMESTEPS,
+            initial_checkpoint_steps=completed_steps,
+            session_total_steps=pending_timesteps
         )
 
         # Checkpoint Callback

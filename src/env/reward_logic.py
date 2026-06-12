@@ -42,10 +42,23 @@ def compute_attack_reward(score: float, self: object, dsp_params: dict = None, c
     seed = getattr(self, "current_seed", "N/A")
     
     # PROGRESS FORMATTING
-    if isinstance(current_step, int) and total_timesteps:
-        # Use global progress (current_step is now initialized from completed_steps)
-        progress = (current_step / total_timesteps) * 100
-        step_str = f"{current_step}/{total_timesteps} ({progress:.1f}%)"
+    initial_checkpoint_steps = getattr(self, "initial_checkpoint_steps", 0)
+    session_total_steps = getattr(self, "session_total_steps", None)
+
+    if isinstance(current_step, int):
+        relative_step = current_step - initial_checkpoint_steps
+        # Fallback to total_timesteps - initial_checkpoint_steps if session_total_steps is not provided
+        total_steps_budget = session_total_steps or (total_timesteps - initial_checkpoint_steps if total_timesteps else None)
+        
+        if total_steps_budget and total_steps_budget > 0:
+            relative_progress = (relative_step / total_steps_budget) * 100
+            step_str = f"{relative_step}/{total_steps_budget} ({relative_progress:.2f}%)"
+        elif total_timesteps:
+            # Fallback to cumulative calculation if we don't have relative budget
+            progress = (current_step / total_timesteps) * 100
+            step_str = f"{current_step}/{total_timesteps} ({progress:.1f}%)"
+        else:
+            step_str = f"{current_step}"
     else:
         step_str = f"{current_step}"
     
