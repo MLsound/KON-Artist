@@ -146,20 +146,35 @@ def train():
 
         detector = AASISTWrapper(detector_name_str, device=requested_device)
         
+        # Initialize learning rate schedule and tensorboard log directory
+        lr_schedule = linear_schedule(float(cfg['ppo']['learning_rate']))
+        tensorboard_log_dir = cfg['logging']['tensorboard_log']
+        if tensorboard_log_dir is not None:
+            tensorboard_log_dir = str(tensorboard_log_dir)
+
         # CHECKPOINT DETECTION (Moved early to inform wrappers/logic)
         checkpoint_cfg = cfg['logging'].get('checkpoint', {})
         latest_checkpoint = None
         completed_steps = 0
+        model = None
         if bool(checkpoint_cfg.get('load_last', False)):
             save_path_str = str(checkpoint_cfg.get('save_path', "outputs/checkpoints/"))
             latest_checkpoint = get_latest_checkpoint(save_path_str)
             if latest_checkpoint:
                 try:
-                    filename = os.path.basename(latest_checkpoint)
-                    completed_steps = int(filename.split('_')[-2])
-                    logger.info(f"Checkpoint detected: {completed_steps} steps already completed.")
-                except (ValueError, IndexError):
-                    logger.warning("Could not extract step count from checkpoint. Starting from 0.")
+                    # Load model structure/metadata to extract genuine completed steps
+                    model = PPO.load(
+                        latest_checkpoint,
+                        device=requested_device,
+                        custom_objects={"learning_rate": lr_schedule},
+                        tensorboard_log=tensorboard_log_dir
+                    )
+                    completed_steps = int(model.num_timesteps)
+                    logger.info(f"Checkpoint detected: {completed_steps} genuine steps already completed.")
+                except Exception as e:
+                    logger.warning(f"Could not load checkpoint to extract step count: {e}. Starting from 0.")
+                    latest_checkpoint = None
+                    model = None
         
         # 2. Initialize Vectorized Environments
         logger.info(f"Instantiating {N_ENVS} parallel environments.")
@@ -190,26 +205,12 @@ def train():
         # VecMonitor is required for RewardLoggerCallback to access ep_info_buffer
         env = VecMonitor(env)
 
-        # 5. Agent Instantiation
-        logger.info("Configuring PPO agent.")
-        
-        # Initialize learning rate schedule
-        lr_schedule = linear_schedule(float(cfg['ppo']['learning_rate']))
-
-        tensorboard_log_dir = cfg['logging']['tensorboard_log']
-        if tensorboard_log_dir is not None:
-            tensorboard_log_dir = str(tensorboard_log_dir)
-
-        if latest_checkpoint:
+        # 5. Agent Instantiation / Setup
+        if model is not None:
             logger.info(f"Resuming training from checkpoint: {latest_checkpoint}")
-            model = PPO.load(
-                latest_checkpoint, 
-                env=env,
-                device=requested_device,
-                learning_rate=lr_schedule,
-                tensorboard_log=tensorboard_log_dir
-            )
+            model.set_env(env)
         else:
+            logger.info("Configuring PPO agent.")
             model = PPO(
                 policy=str(cfg['ppo']['policy']),
                 env=env,
