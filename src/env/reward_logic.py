@@ -7,6 +7,7 @@ as 'Bonafide' by the target model, with additional bonuses for successful attack
 
 The module also includes termination criteria based on the attack score and step limits.
 """
+import math
 import numpy as np
 from src.utils.logger import get_logger
 import logging
@@ -121,9 +122,10 @@ def compute_attack_reward(score: float, self: object, dsp_params: dict = None, c
     bonus_enabled = getattr(self, "bonus", True)
     if bonus_enabled and float(score) > success_threshold:
         bonus_amount = getattr(self, "bonus_amount", 250.0)
-        # Calculate proportional bonus scaled strictly by cluster multiplier
-        raw_bonus = float(score) * bonus_amount
-        bonus_applied = cluster_multiplier * raw_bonus
+        # Calculate asymptotic hyperbolic tangent scaled bonus, ensuring it never exceeds bonus_amount
+        scaled_multiplier = math.tanh(float(score) * 2.0)
+        raw_bonus = bonus_amount * scaled_multiplier
+        bonus_applied = min(cluster_multiplier * raw_bonus, bonus_amount)
         logger.debug(f"Success Bonus (+{bonus_applied:.2f}) applied. Raw: {raw_bonus:.2f}, Mult: {cluster_multiplier:.2f}")
 
     # Unified reward assembly (preserving unscaled baseline penalties)
@@ -137,6 +139,6 @@ def compute_attack_reward(score: float, self: object, dsp_params: dict = None, c
         
     # Telemetry Logging
     cluster_str = f" | Cluster: {cluster_id}" if cluster_id is not None else ""
-    logger.info(f"Worker {worker_id} | Step {step_str} | Score: {score:.4f} | Reward: {reward:.2f} | Bonus: {bonus_applied:.2f}{cluster_str} | DSP: {last_params} ")
+    logger.info(f"Worker {worker_id} | Step {step_str}{cluster_str} | Score: {score:.4f} | Reward: {reward:.2f} | Bonus: {bonus_applied:.2f} | DSP: {last_params} ")
 
     return np.float32(reward), terminated, float(bonus_applied)

@@ -104,3 +104,33 @@ def test_fidelity_penalty(mock_open, mock_pickle_load, mock_detector):
         _, reward_lofi, _, _, _ = env.step(action_lofi)
 
     assert reward_hifi > reward_lofi
+
+def test_compute_attack_reward_tanh_bonus():
+    """Verify that compute_attack_reward applies math.tanh bonus correctly and caps it to bonus_amount."""
+    from src.env.reward_logic import compute_attack_reward
+    import math
+
+    class MockEnv:
+        success_threshold = 0.5
+        bonus = True
+        bonus_amount = 75.0
+        clustering_config = {}
+
+    env = MockEnv()
+
+    # 1. Score below threshold
+    _, _, bonus_applied = compute_attack_reward(0.4, env)
+    assert bonus_applied == 0.0
+
+    # 2. Score above threshold, multiplier = 1.0
+    _, _, bonus_applied = compute_attack_reward(0.8, env)
+    expected_raw_bonus = 75.0 * math.tanh(0.8 * 2.0)
+    assert np.isclose(bonus_applied, expected_raw_bonus)
+
+    # 3. Score above threshold, multiplier = 5.0 (should be capped at bonus_amount)
+    env.clustering_config = {
+        "inverse_frequency_multipliers": {0: 5.0}
+    }
+    _, _, bonus_applied = compute_attack_reward(0.8, env, cluster_probs=np.array([1.0]))
+    # Expected: min(5.0 * expected_raw_bonus, 75.0) which is 75.0
+    assert np.isclose(bonus_applied, 75.0)
