@@ -32,7 +32,12 @@ def test_reward_logger_file_creation(tmp_path, mock_model):
     with open(save_path, 'r') as f:
         reader = csv.reader(f)
         header = next(reader)
-        assert header == ['step', 'session_step', 'session_progress_pct', 'reward', 'score', 'bonus', 'cluster', 'dsp_jitter', 'dsp_shimmer', 'dsp_tilt', 'dsp_harmonics', 'dsp_threshold', 'dsp_ratio', 'dsp_bitrate']
+        assert header == [
+            'step', 'session_step', 'session_progress_pct', 'reward', 'score', 'bonus', 'cluster', 
+            'dsp_jitter', 'dsp_shimmer', 'dsp_tilt', 'dsp_harmonics', 'dsp_threshold', 'dsp_ratio', 'dsp_bitrate',
+            'raw_action_0', 'raw_action_1', 'raw_action_2', 'raw_action_3', 'raw_action_4', 'raw_action_5', 'raw_action_6',
+            'conditioned_action_0', 'conditioned_action_1', 'conditioned_action_2', 'conditioned_action_3', 'conditioned_action_4', 'conditioned_action_5', 'conditioned_action_6'
+        ]
 
 def test_reward_logger_on_step(tmp_path, mock_model):
     """Verify that rewards are appended to the CSV during training steps."""

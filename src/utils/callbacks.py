@@ -8,6 +8,7 @@ integration for tracking real-time DSP parameter evolution.
 """
 import os
 import csv
+import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 import wandb
 from src.utils.logger import get_logger
@@ -38,7 +39,12 @@ class RewardLoggerCallback(BaseCallback):
         """Initialize the CSV file with headers at the start of training."""
         with open(self.save_path, 'w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(['step', 'session_step', 'session_progress_pct', 'reward', 'score', 'bonus', 'cluster', 'dsp_jitter', 'dsp_shimmer', 'dsp_tilt', 'dsp_harmonics', 'dsp_threshold', 'dsp_ratio', 'dsp_bitrate'])
+            writer.writerow([
+                'step', 'session_step', 'session_progress_pct', 'reward', 'score', 'bonus', 'cluster', 
+                'dsp_jitter', 'dsp_shimmer', 'dsp_tilt', 'dsp_harmonics', 'dsp_threshold', 'dsp_ratio', 'dsp_bitrate',
+                'raw_action_0', 'raw_action_1', 'raw_action_2', 'raw_action_3', 'raw_action_4', 'raw_action_5', 'raw_action_6',
+                'conditioned_action_0', 'conditioned_action_1', 'conditioned_action_2', 'conditioned_action_3', 'conditioned_action_4', 'conditioned_action_5', 'conditioned_action_6'
+            ])
         logger.info(f"Reward, Score, Bonus and DSP logging started at: {self.save_path}")
 
     def _on_step(self) -> bool:
@@ -70,6 +76,9 @@ class RewardLoggerCallback(BaseCallback):
                         cluster = info.get("cluster_id", "")
                         dsp = info.get("dsp_params", {})
                         
+                        raw_act = info.get("raw_action", np.zeros(7))
+                        cond_act = info.get("conditioned_action", np.zeros(7))
+                        
                         writer.writerow([
                             global_step, 
                             session_step,
@@ -84,7 +93,9 @@ class RewardLoggerCallback(BaseCallback):
                             dsp.get("harmonics", ""),
                             dsp.get("threshold", ""),
                             dsp.get("ratio", ""),
-                            dsp.get("bitrate", "")
+                            dsp.get("bitrate", ""),
+                            raw_act[0], raw_act[1], raw_act[2], raw_act[3], raw_act[4], raw_act[5], raw_act[6],
+                            cond_act[0], cond_act[1], cond_act[2], cond_act[3], cond_act[4], cond_act[5], cond_act[6]
                         ])
                         
                     # Also log if an episode finished (optional, but 'reward' above covers the terminal reward too)

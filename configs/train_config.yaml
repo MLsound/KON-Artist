@@ -35,6 +35,17 @@ clustering:
   n_components: 10
   model_path: "models/gmm_registry.pkl"
   
+  # 1. Cluster Exclusion Configuration
+  # Specify cluster indices to omit entirely from the dataset loop
+  exclude_clusters: [5]
+
+  # 2. Dynamic Action Noise Scaling parameters
+  dynamic_noise:
+    enabled: true
+    exploration_floor: 0.3    # Minimum scaling multiplier for highly successful clusters
+    exploration_ceiling: 1.8  # Maximum scaling multiplier for highly resilient clusters
+    asr_update_window: 4096   # Rolling step window used to compute real-time cluster ASR
+  
   # A) Cluster Inverse Frequencies (Based on Empirical Footprint Shares)
   # Lower share = Higher reward multiplier to combat minority starvation
   inverse_frequency_multipliers:
@@ -79,7 +90,7 @@ logging:
   log_dir: "outputs/"
   tensorboard_log: null # Set to a path if tensorboard is needed
   reward_log_freq: 1 # Log rewards every N updates (will be converted to steps in script)
-  time_per_step: 0.17157 # Average time per step in seconds for estimation 
+  time_per_step: 0.17842 # Average time per step in seconds for estimation 
   checkpoint:
     save_freq: 1 # Number of PPO UPDATES between checkpoints (will be converted to steps in script)
     save_path: "outputs/checkpoints/"
