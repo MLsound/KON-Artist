@@ -250,13 +250,14 @@ def train():
         )
         
         # Entropy Decay: From exploration to exploitation
-        entropy_cfg = cfg['ppo'].get('entropy', {'initial': 0.01, 'final': 0.001})
+        entropy_cfg = cfg['ppo'].get('entropy', {'initial': 0.01, 'final': 0.001, 'mode': 'global'})
         entropy_callback = EntropyDecayCallback(
             initial_ent_coef=entropy_cfg['initial'], 
             final_ent_coef=entropy_cfg['final'], 
             total_timesteps=TOTAL_TIMESTEPS,
             initial_checkpoint_steps=completed_steps,
-            session_total_steps=pending_timesteps
+            session_total_steps=pending_timesteps,
+            mode=str(entropy_cfg.get('mode', 'global'))
         )
 
         # Checkpoint Callback
