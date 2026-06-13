@@ -16,7 +16,18 @@ logger = get_logger(name=__file__,
                     log_file="outputs/train_session.log",
                     level=logging.INFO)  # Set to DEBUG for detailed trace during environment interactions
 
-def compute_attack_reward(score: float, self: object, dsp_params: dict = None, cluster_probs: np.ndarray = None) -> tuple:
+def stable_sigmoid(x: float) -> float:
+    """
+    Numerically stable sigmoid function.
+    """
+    if x >= 0:
+        z = math.exp(-x)
+        return 1.0 / (1.0 + z)
+    else:
+        z = math.exp(x)
+        return z / (1.0 + z)
+
+def compute_attack_reward(score: float, self: object, dsp_params: dict = None, cluster_probs: np.ndarray = None, logit: float = None) -> tuple:
     """
     Standardized reward and termination logic for KON-Artist.
     Ensures consistency between single-env and vectorized modes.
@@ -26,10 +37,12 @@ def compute_attack_reward(score: float, self: object, dsp_params: dict = None, c
         self (object): The environment instance (AudioAttackEnv or VecDetectorWrapper) to access thresholds and logging.
         dsp_params (dict, optional): The DSP configurations used in the current step.
         cluster_probs (np.ndarray, optional): Soft cluster assignment probabilities.
+        logit (float, optional): Raw un-softmaxed logit from the detector.
 
     Returns:
         reward (float): The computed reward for the current step.
         terminated (bool): Whether the episode should be terminated based on the attack success.
+        bonus (float): The applied success bonus.
     """
     # Configuration recovery (with defaults for the Wrapper)
     success_threshold = getattr(self, "success_threshold", 0.5)
@@ -64,16 +77,34 @@ def compute_attack_reward(score: float, self: object, dsp_params: dict = None, c
         step_str = f"{current_step}"
     
     # REWARD FUNCTION
-    # Reward: Log-probability of appearing 'Bonafide'
-    # R = log(P + epsilon) magnifies gradients for low-probability states
+    # Piecewise Log-Scaled Reward logic based on raw logit x (logit)
+    # Stage A (Exploration Phase / Undetected Improvement): logit < 0.0
+    # Stage B (Exploitation Phase / Threshold Breach): logit >= 0.0
     epsilon = 1e-9 # Small constant to prevent log(0) and stabilize training when scores are very low
     vertical_shift = 25.0 # Shift to keep rewards positive for PPO stability
-    base_log_reward = float(np.log(score + epsilon)) # Logarithmic reward to create a strong gradient signal
-    logger.debug(f"Raw Score: {float(score)} | Log Reward: {base_log_reward}")
+    scalar_scale = 1.0 # Scale factor for the exploration phase reward scaling
     
-    # Base reward with vertical shift applied (Unscaled Axis)
-    base_reward = base_log_reward + vertical_shift
-
+    if logit is None:
+        # Reconstruct logit from score if not provided (backward compatibility fallback)
+        epsilon_score = 1e-9
+        clipped_score = np.clip(score, epsilon_score, 1.0 - epsilon_score)
+        logit = float(np.log(clipped_score) - np.log(1.0 - clipped_score))
+    
+    if logit < 0.0:
+        # Stage A: Exploration Phase
+        # Use log-sigmoid to ensure continuous gradient for extremely negative logits
+        sig = stable_sigmoid(logit)
+        base_log_reward = float(np.log(sig + epsilon))
+        base_reward = scalar_scale * base_log_reward + vertical_shift
+    else:
+        # Stage B: Exploitation Phase / Threshold Breach
+        # Transition to the existing reward structure based on probability score
+        # Using score directly ensures consistency and float accuracy
+        base_log_reward = float(np.log(score + epsilon))
+        base_reward = scalar_scale * base_log_reward + vertical_shift
+    
+    logger.debug(f"Raw Score: {float(score)} | Logit: {logit} | Base Reward: {base_reward}")
+    
     # A) CLUSTER MULTIPLIER EXTRACTION
     cluster_id = None
     cluster_multiplier = 1.0
@@ -94,10 +125,31 @@ def compute_attack_reward(score: float, self: object, dsp_params: dict = None, c
     fidelity_penalty = 0.0
     aux_cfg = clustering_cfg.get("auxiliary_reward", {}) or {}
     if aux_cfg.get("enabled", False):
-        # 1. Stagnation Penalty: if score is exactly 0.0, the agent is in a dead zone
-        if float(score) <= 1e-7: # Practical zero for AASIST3
+        # 1. Stagnation Penalty: if score is exactly 0.0, the agent is in a dead zone.
+        # Also apply if the logit does not change across steps due to execution clipping.
+        is_stagnated = False
+        
+        # Retrieve last logit
+        last_logit = None
+        if hasattr(self, "current_env_idx") and hasattr(self, "last_logits") and self.last_logits is not None:
+            env_idx = getattr(self, "current_env_idx")
+            if env_idx is not None and env_idx < len(self.last_logits):
+                last_logit = self.last_logits[env_idx]
+        else:
+            last_logit = getattr(self, "last_logit", None)
+
+        # Check if logit hasn't changed (if last_logit is available)
+        if last_logit is not None and math.isclose(logit, last_logit, abs_tol=1e-9):
+            is_stagnated = True
+            logger.debug(f"Logit did not change from previous step ({logit:.6f}). Applying stagnation penalty.")
+
+        # Also apply if score is practically 0.0 (as before)
+        if float(score) <= 1e-7:
+            is_stagnated = True
+
+        if is_stagnated:
             stagnation_penalty = float(aux_cfg.get("stagnation_penalty", -5.0))
-            logger.debug(f"Stagnation Penalty ({stagnation_penalty}) applied for zero-score.")
+            logger.debug(f"Stagnation Penalty ({stagnation_penalty}) applied.")
 
         # 2. Fidelity Guidance: penalize extreme acoustic damage
         if isinstance(last_params, dict):
@@ -140,5 +192,15 @@ def compute_attack_reward(score: float, self: object, dsp_params: dict = None, c
     # Telemetry Logging
     cluster_str = f" | Cluster: {cluster_id}" if cluster_id is not None else ""
     logger.info(f"Worker {worker_id} | Step {step_str}{cluster_str} | Score: {score:.4f} | Reward: {reward:.2f} | Bonus: {bonus_applied:.2f} | DSP: {last_params} ")
+
+    # Update last logit in the environment self
+    if hasattr(self, "current_env_idx"):
+        env_idx = getattr(self, "current_env_idx")
+        if not hasattr(self, "last_logits") or self.last_logits is None:
+            self.last_logits = [None] * getattr(self, "num_envs", 1)
+        if env_idx is not None and env_idx < len(self.last_logits):
+            self.last_logits[env_idx] = logit
+    else:
+        self.last_logit = logit
 
     return np.float32(reward), terminated, float(bonus_applied)

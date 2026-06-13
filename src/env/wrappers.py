@@ -97,6 +97,7 @@ class VecDetectorWrapper(VecEnvWrapper):
         self.asr_tracker = collections.deque(maxlen=self.asr_update_window)
         self.last_raw_actions = None
         self.last_conditioned_actions = None
+        self.last_logits = None
 
     def _get_conditioned_observations(self, embeddings):
         """
@@ -166,6 +167,7 @@ class VecDetectorWrapper(VecEnvWrapper):
 
     def reset(self):
         """Batched reset for all environments."""
+        self.last_logits = [None] * self.num_envs
         obs = self.venv.reset()
         # obs is [N_ENVS, 64600]
         waveform = torch.from_numpy(obs).unsqueeze(1).float() # [N, 1, L]
@@ -259,8 +261,20 @@ class VecDetectorWrapper(VecEnvWrapper):
         
         # Combined batch inference
         batch_waveform = torch.cat(waveforms, dim=0).unsqueeze(1).float() # [Total, 1, L]
-        scores, embeddings = self.detector.get_score_and_embedding(batch_waveform)
-        
+        try:
+            detector_res = self.detector.get_score_and_embedding(batch_waveform, return_logits=True)
+        except TypeError:
+            detector_res = self.detector.get_score_and_embedding(batch_waveform)
+            
+        if len(detector_res) == 3:
+            scores, logits, embeddings = detector_res
+        else:
+            scores, embeddings = detector_res
+            # Fallback reconstruction of logits
+            epsilon_score = 1e-9
+            clipped_scores = np.clip(scores, epsilon_score, 1.0 - epsilon_score)
+            logits = np.log(clipped_scores) - np.log(1.0 - clipped_scores)
+            
         embeddings_np = embeddings.cpu().numpy().astype(np.float32)
         
         # Create array for the next observations returned by step_wait
@@ -311,6 +325,11 @@ class VecDetectorWrapper(VecEnvWrapper):
                 # Update cached probs for the new episode
                 self.current_trajectory_cluster_probs[i] = start_c_probs
                 new_cond_obs[i] = np.concatenate([embeddings_np[i], start_c_probs])
+                
+                # Reset worker logit history to prevent cross-episode stagnation detection
+                if hasattr(self, "last_logits") and self.last_logits is not None:
+                    if i < len(self.last_logits):
+                        self.last_logits[i] = None
             else:
                 # Ongoing episode: use cached static probs
                 new_cond_obs[i] = np.concatenate([embeddings_np[i], self.current_trajectory_cluster_probs[i]])
@@ -324,11 +343,13 @@ class VecDetectorWrapper(VecEnvWrapper):
             if i in terminal_map:
                 idx = terminal_map[i]
                 score = scores[idx]
+                logit = logits[idx]
                 c_probs = old_trajectory_cluster_probs[i] if old_trajectory_cluster_probs is not None else None
                 # Replace terminal raw audio with conditioned embedding to prevent crash in SB3
                 infos[i]["terminal_observation"] = np.concatenate([embeddings_np[idx], c_probs]).astype(np.float32)
             else:
                 score = scores[i]
+                logit = logits[i]
                 c_probs = old_trajectory_cluster_probs[i] if old_trajectory_cluster_probs is not None else None
             
             # ASR TRACKING UPDATE
@@ -343,11 +364,13 @@ class VecDetectorWrapper(VecEnvWrapper):
 
             # Update current_step for logging in reward_logic
             self.current_step = self.total_steps
+            # Pass the environment index to the wrapper for worker tracking
+            self.current_env_idx = i
             # Extract DSP parameters used in this worker's step
             dsp_params = infos[i].get('dsp_params', None)
             
             # Compute reward and check for termination based on the CORRECT score and cluster
-            reward, terminated, bonus = compute_attack_reward(score, self, dsp_params=dsp_params, cluster_probs=c_probs)
+            reward, terminated, bonus = compute_attack_reward(score, self, dsp_params=dsp_params, cluster_probs=c_probs, logit=logit)
             
             new_rewards.append(float(reward))
             # SB3 VecEnv handles 'dones' (terminated or truncated)

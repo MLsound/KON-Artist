@@ -88,10 +88,11 @@ class AASISTWrapper:
         """
         self._embedding = args[0].flatten(1)
         
-    def get_score_and_embedding(self, waveform: torch.Tensor):
+    def get_score_and_embedding(self, waveform: torch.Tensor, return_logits: bool = False):
         """
         Performs inference. Returns the Bonafide probability score and the embedding.
         Supports both single waveforms [1, L] or [1, 1, L] and batches [B, 1, L].
+        If return_logits is True, returns (scores, logits_bonafide, embedding).
         """
         # 0. Safety reset for embeddings to prevent stale data leakage
         self._embedding = None
@@ -118,6 +119,14 @@ class AASISTWrapper:
             # Captured embedding from the hook (already flattened to [B, D])
             embedding = self._embedding
 
+            # Extract raw logit corresponding to the Bonafide class
+            if logits.shape[-1] >= 2:
+                # Logits shape [B, C], usually [Spoof, Bonafide]
+                logits_bonafide = logits[:, 1].cpu().numpy()
+            else:
+                # Single output class or single output dimension
+                logits_bonafide = logits.squeeze(-1).cpu().numpy()
+
             # 4. Convert logits to Bonafide probability
             # AASIST3 typically outputs [Spoof, Bonafide]
             probabilities = F.softmax(logits, dim=1)
@@ -125,5 +134,8 @@ class AASISTWrapper:
             # Extract the probability for the Bonafide class (index 1) for all samples in batch
             # Returns a 1D numpy array of scores
             scores = probabilities[:, 1].cpu().numpy()
-                
-            return scores, embedding
+            
+            if return_logits:
+                return scores, logits_bonafide, embedding
+            else:
+                return scores, embedding

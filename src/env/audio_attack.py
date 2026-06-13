@@ -196,9 +196,23 @@ class AudioAttackEnv(gym.Env):
             }
 
         # 2. Evaluation by AASIST3
-        # Capture both score and embedding for reward and observation
-        scores, embeddings = self.detector.get_score_and_embedding(processed_audio)
-        score, embedding = scores[0], embeddings[0] # Assuming batch size of 1 for direct inference mode
+        # Capture both score, logit, and embedding for reward and observation
+        try:
+            detector_res = self.detector.get_score_and_embedding(processed_audio, return_logits=True)
+        except TypeError:
+            detector_res = self.detector.get_score_and_embedding(processed_audio)
+            
+        if len(detector_res) == 3:
+            scores, logits, embeddings = detector_res
+            score, logit, embedding = scores[0], logits[0], embeddings[0]
+        else:
+            scores, embeddings = detector_res
+            score, embedding = scores[0], embeddings[0]
+            # Fallback reconstruction of logit
+            epsilon_score = 1e-9
+            clipped_score = np.clip(score, epsilon_score, 1.0 - epsilon_score)
+            logit = float(np.log(clipped_score) - np.log(1.0 - clipped_score))
+            
         logger.debug(f"Embedding shape: {embedding.shape}") # Debugging statement to trace embedding extraction
         logger.debug(f"AASIST3 score: {score}") # Debugging statement to trace model output
         
@@ -211,7 +225,7 @@ class AudioAttackEnv(gym.Env):
             cluster_probs = None
                 
         # 3. Compute reward and check for termination
-        reward, terminated, bonus = compute_attack_reward(score, self, cluster_probs=cluster_probs) # Centralized call ensures logic parity with non-vectorized env
+        reward, terminated, bonus = compute_attack_reward(score, self, cluster_probs=cluster_probs, logit=logit) # Centralized call ensures logic parity with non-vectorized env
 
         # Collect info for logging and analysis
         info = {
@@ -234,6 +248,7 @@ class AudioAttackEnv(gym.Env):
         """Resets the environment to a new audio sample."""
         super().reset(seed=seed)
         self.current_step = 0 # Reset step counter at the beginning of each episode
+        self.last_logit = None # Reset stagnation tracking
         
         # Initial info dict for reset
         info = {'worker_id': self.rank, 'seed': self.seed}

@@ -134,3 +134,60 @@ def test_compute_attack_reward_tanh_bonus():
     _, _, bonus_applied = compute_attack_reward(0.8, env, cluster_probs=np.array([1.0]))
     # Expected: min(5.0 * expected_raw_bonus, 75.0) which is 75.0
     assert np.isclose(bonus_applied, 75.0)
+
+def test_compute_attack_reward_piecewise():
+    """Verify the piecewise log-scaled reward calculations for Stage A and Stage B."""
+    from src.env.reward_logic import compute_attack_reward, stable_sigmoid
+    import math
+    import numpy as np
+
+    class MockEnv:
+        success_threshold = 0.5
+        bonus = True
+        bonus_amount = 75.0
+        clustering_config = {}
+
+    env = MockEnv()
+
+    # Stage A: Exploration Phase (logit < 0, score is close to 0)
+    score_a = stable_sigmoid(-10.0)
+    reward_a, _, _ = compute_attack_reward(score_a, env, logit=-10.0)
+    expected_reward_a = 1.0 * math.log(score_a + 1e-9) + 25.0
+    assert np.isclose(reward_a, expected_reward_a)
+
+    # Stage B: Exploitation Phase / Threshold Breach (logit >= 0, score >= 0.5)
+    score_b = stable_sigmoid(2.0)
+    reward_b, _, _ = compute_attack_reward(score_b, env, logit=2.0)
+    expected_bonus = 75.0 * math.tanh(score_b * 2.0)
+    expected_reward_b = 1.0 * math.log(score_b + 1e-9) + 25.0 + expected_bonus
+    assert np.isclose(reward_b, expected_reward_b)
+
+def test_stagnation_penalty_unchanged_logit():
+    """Verify that unchanged logits trigger the stagnation penalty."""
+    from src.env.reward_logic import compute_attack_reward
+    import numpy as np
+    
+    class MockEnv:
+        success_threshold = 0.5
+        bonus = True
+        bonus_amount = 75.0
+        clustering_config = {
+            "auxiliary_reward": {
+                "enabled": True,
+                "stagnation_penalty": -8.0,
+                "fidelity_weight": 0.0
+            }
+        }
+        last_logit = None
+
+    env = MockEnv()
+    
+    # First step: logit = -3.0
+    reward_first, _, _ = compute_attack_reward(0.0474, env, logit=-3.0)
+    assert env.last_logit == -3.0
+    
+    # Second step: logit is still -3.0 (unchanged) -> stagnation penalty applied
+    reward_stagnated, _, _ = compute_attack_reward(0.0474, env, logit=-3.0)
+    
+    # The second reward should be exactly 8.0 lower because of stagnation penalty
+    assert np.isclose(reward_stagnated, reward_first - 8.0)

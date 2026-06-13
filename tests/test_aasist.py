@@ -66,3 +66,21 @@ def test_get_score_no_grad(wrapper, mock_waveform):
     # If no_grad is working, the output shouldn't have a grad_fn
     scores, embedding = wrapper.get_score_and_embedding(mock_waveform)
     assert embedding.grad_fn is None
+
+def test_return_logits_option(wrapper, mock_waveform):
+    """Verify that get_score_and_embedding correctly returns logits when return_logits=True."""
+    import math
+    mock_logits = torch.tensor([[-5.0, 3.5]])
+    mock_embedding = torch.randn(1, 160)
+    
+    def mock_forward(x):
+        wrapper._embedding = mock_embedding
+        return mock_logits
+        
+    wrapper.model.side_effect = mock_forward
+    
+    scores, logits, embedding = wrapper.get_score_and_embedding(mock_waveform, return_logits=True)
+    
+    assert logits[0] == pytest.approx(3.5)
+    assert scores[0] == pytest.approx(math.exp(3.5) / (math.exp(-5.0) + math.exp(3.5)))
+    assert torch.equal(embedding, mock_embedding)
