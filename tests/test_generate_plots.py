@@ -55,3 +55,21 @@ def test_moving_average_logic(valid_csv, tmp_path, caplog):
     assert expected_png.exists()
     # Check that it didn't crash (manual check of plt state is hard, 
     # but we verify execution completion).
+
+def test_generate_plot_with_limit(valid_csv, tmp_path):
+    """Verify that a plot is successfully generated with a y-axis limit."""
+    output_png = tmp_path / "output_limit.png"
+    generate_report_plot(valid_csv, str(output_png), window_size=10, limit=200)
+
+    expected_png = tmp_path / "convergence_test_rewards.png"
+    assert expected_png.exists()
+    assert expected_png.stat().st_size > 0
+
+def test_generate_plot_with_dots(valid_csv, tmp_path):
+    """Verify that a plot is successfully generated in dots mode."""
+    output_png = tmp_path / "output_dots.png"
+    generate_report_plot(valid_csv, str(output_png), window_size=10, dots=True)
+
+    expected_png = tmp_path / "convergence_test_rewards_dots.png"
+    assert expected_png.exists()
+    assert expected_png.stat().st_size > 0
