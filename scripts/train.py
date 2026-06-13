@@ -24,7 +24,9 @@ from stable_baselines3.common.callbacks import CheckpointCallback
 # Add the project root to the Python path
 sys.path.append(str(Path(__file__).parent.parent))
 
-from src.models.aasist import AASISTWrapper
+from src.models import AASISTWrapper, SquashedGaussianActorCriticPolicy
+PPO.policy_aliases["SquashedGaussianActorCriticPolicy"] = SquashedGaussianActorCriticPolicy
+
 from src.env.audio_attack import AudioAttackEnv
 from src.env.wrappers import VecDetectorWrapper
 from src.utils.callbacks import RewardLoggerCallback, WandbAudioCallback, EntropyDecayCallback, LearningRateLoggerCallback
