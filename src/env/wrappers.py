@@ -69,7 +69,7 @@ class VecDetectorWrapper(VecEnvWrapper):
             self.bias_matrix = np.array(self.clustering_config["cluster_biases"], dtype=np.float32)
             logger.info(f"Cluster-Conditioned Translation Matrix loaded. Shape: {self.bias_matrix.shape}")
             
-        self.current_cluster_probs = None
+        self.current_trajectory_cluster_probs = None
         
         # Cluster Exclusion Configuration
         self.exclude_clusters = []
@@ -178,7 +178,8 @@ class VecDetectorWrapper(VecEnvWrapper):
         
         if self.clustering_config is not None:
             # Store probabilities for step_async biasing [N, K]
-            self.current_cluster_probs = cond_obs[:, 160:].astype(np.float32)
+            # Since this is reset, we initialize the static trajectory cluster probabilities
+            self.current_trajectory_cluster_probs = cond_obs[:, 160:].astype(np.float32)
             
         return cond_obs.astype(np.float32)
 
@@ -202,9 +203,9 @@ class VecDetectorWrapper(VecEnvWrapper):
             
             omegas = []
             for i in range(self.num_envs):
-                # get dominant cluster for env i
-                if self.current_cluster_probs is not None:
-                    k = int(np.argmax(self.current_cluster_probs[i]))
+                # get dominant cluster for env i (from cached static trajectory probs!)
+                if self.current_trajectory_cluster_probs is not None:
+                    k = int(np.argmax(self.current_trajectory_cluster_probs[i]))
                 else:
                     k = 0
                 
@@ -221,9 +222,9 @@ class VecDetectorWrapper(VecEnvWrapper):
         else:
             conditioned_actions = raw_actions.copy()
             
-        # 2. Apply bias matrix if enabled
-        if self.bias_matrix is not None and self.current_cluster_probs is not None:
-            dynamic_biases = np.matmul(self.current_cluster_probs, self.bias_matrix).astype(np.float32)
+        # 2. Apply bias matrix if enabled (using cached static trajectory probs!)
+        if self.bias_matrix is not None and self.current_trajectory_cluster_probs is not None:
+            dynamic_biases = np.matmul(self.current_trajectory_cluster_probs, self.bias_matrix).astype(np.float32)
             final_actions = np.clip(conditioned_actions + dynamic_biases, -1.0, 1.0).astype(np.float32)
         else:
             final_actions = conditioned_actions.astype(np.float32)
@@ -238,6 +239,11 @@ class VecDetectorWrapper(VecEnvWrapper):
         obs, rewards, dones, infos = self.venv.step_wait()
         # obs is [N_ENVS, 64600]
         self.total_steps += self.num_envs
+        
+        # Save old trajectory cluster probs for reward/terminal obs calculation
+        old_trajectory_cluster_probs = None
+        if self.current_trajectory_cluster_probs is not None:
+            old_trajectory_cluster_probs = self.current_trajectory_cluster_probs.copy()
         
         # Prepare waveforms for batch inference
         # 1. Current observations (for next step or if it just finished)
@@ -255,26 +261,59 @@ class VecDetectorWrapper(VecEnvWrapper):
         batch_waveform = torch.cat(waveforms, dim=0).unsqueeze(1).float() # [Total, 1, L]
         scores, embeddings = self.detector.get_score_and_embedding(batch_waveform)
         
-        # Process conditioned observations (batch)
-        all_conditioned_obs = self._get_conditioned_observations(embeddings)
+        embeddings_np = embeddings.cpu().numpy().astype(np.float32)
         
-        # Apply cluster filtering for newly reset environments
-        if self.exclude_clusters:
-            reset_indices = [i for i, done in enumerate(dones) if done]
-            if reset_indices:
-                obs, all_conditioned_obs = self._filter_excluded_clusters(obs, all_conditioned_obs, reset_indices, infos)
-
-        # Extract cluster probabilities [Total_InFERENCE_Size, K]
-        all_cluster_probs = None
-        if self.clustering_config is not None:
-            all_cluster_probs = all_conditioned_obs[:, 160:].astype(np.float32)
-            
-            # Periodically log cluster distribution for diagnostic transparency
-            if self.total_steps % 100 == 0:
-                cluster_ids = np.argmax(all_cluster_probs, axis=1)
-                unique, counts = np.unique(cluster_ids, return_counts=True)
-                dist = dict(zip(unique, counts))
-                logger.info(f"Batch Cluster Distribution: {dist}")
+        # Create array for the next observations returned by step_wait
+        new_cond_obs = np.zeros((self.num_envs, self.observation_space.shape[0]), dtype=np.float32)
+        
+        # Process resets/ingestion filtering and update self.current_trajectory_cluster_probs
+        for i in range(self.num_envs):
+            if dones[i]:
+                # Environment auto-reset inside self.venv.step_wait().
+                # obs[i] and embeddings[i] are the starting sample of the new episode.
+                # Run GMM on this start sample and filter
+                start_emb = embeddings_np[i:i+1] # keep 2D shape
+                start_c_probs = self.clustering_pipeline.predict_proba(start_emb).astype(np.float32)[0]
+                
+                k_dom = int(np.argmax(start_c_probs))
+                retries = 0
+                max_retries = 100
+                
+                while k_dom in self.exclude_clusters and retries < max_retries:
+                    retries += 1
+                    logger.info(f"Worker {i}: Auto-reset sample belonged to excluded cluster {k_dom}. Discarding and resetting (Retry {retries}/{max_retries}).")
+                    
+                    res = self.venv.env_method("reset", indices=i)
+                    raw_audio_i, info_i = res[0]
+                    infos[i].update(info_i)
+                    
+                    obs[i] = raw_audio_i
+                    
+                    # Sync venv.buf_obs
+                    if hasattr(self.venv, "buf_obs"):
+                        for key in self.venv.buf_obs.keys():
+                            if key is None:
+                                self.venv.buf_obs[None][i] = raw_audio_i
+                            else:
+                                self.venv.buf_obs[key][i] = raw_audio_i
+                                
+                    waveform_i = torch.from_numpy(raw_audio_i).unsqueeze(0).unsqueeze(1).float()
+                    _, embedding_i = self.detector.get_score_and_embedding(waveform_i)
+                    
+                    embeddings_np[i] = embedding_i.cpu().numpy().astype(np.float32)[0]
+                    start_emb = embeddings_np[i:i+1]
+                    start_c_probs = self.clustering_pipeline.predict_proba(start_emb).astype(np.float32)[0]
+                    k_dom = int(np.argmax(start_c_probs))
+                    
+                if retries >= max_retries:
+                    logger.warning(f"Worker {i}: Reached max retries ({max_retries}) trying to filter excluded clusters during auto-reset.")
+                
+                # Update cached probs for the new episode
+                self.current_trajectory_cluster_probs[i] = start_c_probs
+                new_cond_obs[i] = np.concatenate([embeddings_np[i], start_c_probs])
+            else:
+                # Ongoing episode: use cached static probs
+                new_cond_obs[i] = np.concatenate([embeddings_np[i], self.current_trajectory_cluster_probs[i]])
 
         new_rewards = []
         new_dones = []
@@ -285,16 +324,16 @@ class VecDetectorWrapper(VecEnvWrapper):
             if i in terminal_map:
                 idx = terminal_map[i]
                 score = scores[idx]
+                c_probs = old_trajectory_cluster_probs[i] if old_trajectory_cluster_probs is not None else None
                 # Replace terminal raw audio with conditioned embedding to prevent crash in SB3
-                infos[i]["terminal_observation"] = all_conditioned_obs[idx].astype(np.float32)
-                c_probs = all_cluster_probs[idx] if all_cluster_probs is not None else None
+                infos[i]["terminal_observation"] = np.concatenate([embeddings_np[idx], c_probs]).astype(np.float32)
             else:
                 score = scores[i]
-                c_probs = all_cluster_probs[i] if all_cluster_probs is not None else None
+                c_probs = old_trajectory_cluster_probs[i] if old_trajectory_cluster_probs is not None else None
             
             # ASR TRACKING UPDATE
-            if self.current_cluster_probs is not None:
-                prev_cluster_id = int(np.argmax(self.current_cluster_probs[i]))
+            if old_trajectory_cluster_probs is not None:
+                prev_cluster_id = int(np.argmax(old_trajectory_cluster_probs[i]))
                 is_success = bool(score > self.success_threshold)
                 self.asr_tracker.append((prev_cluster_id, is_success))
             
@@ -318,7 +357,7 @@ class VecDetectorWrapper(VecEnvWrapper):
             
             # If the episode ended (either in worker or here), ensure terminal_observation exists
             if is_done and "terminal_observation" not in infos[i]:
-                infos[i]["terminal_observation"] = all_conditioned_obs[i].astype(np.float32)
+                infos[i]["terminal_observation"] = np.concatenate([embeddings_np[i], c_probs]).astype(np.float32)
 
             # Update info dictionaries with actual detector results
             infos[i]['score'] = float(score)
@@ -334,9 +373,5 @@ class VecDetectorWrapper(VecEnvWrapper):
             if self.last_conditioned_actions is not None:
                 infos[i]['conditioned_action'] = self.last_conditioned_actions[i]
                 
-        # Update current clusters probabilities for the next step_async call [N_ENVS, K]
-        if all_cluster_probs is not None:
-            self.current_cluster_probs = all_cluster_probs[:self.num_envs].astype(np.float32)
-            
         # Return conditioned embeddings of current observations [0:num_envs]
-        return all_conditioned_obs[:self.num_envs].astype(np.float32), np.array(new_rewards, dtype=np.float32), np.array(new_dones), infos
+        return new_cond_obs, np.array(new_rewards, dtype=np.float32), np.array(new_dones), infos

@@ -85,12 +85,12 @@ def test_env_with_clustering_and_detector(mock_open, mock_pickle_load, mock_dete
     assert obs.shape == (162,)
     mock_pipeline.predict_proba.assert_called_once()
     
-    # Step should also return conditioned observation
+    # Step should also return conditioned observation without recalculating GMM probabilities
     mock_pipeline.predict_proba.reset_mock()
     action = np.zeros(7)
     obs, reward, terminated, truncated, info = env.step(action)
     assert obs.shape == (162,)
-    mock_pipeline.predict_proba.assert_called_once()
+    mock_pipeline.predict_proba.assert_not_called()
 
 @patch("pickle.load")
 @patch("builtins.open", new_callable=MagicMock)

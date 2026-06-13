@@ -159,13 +159,13 @@ class AudioAttackEnv(gym.Env):
         # Intercept raw action and apply translation matrix
         biased_action = np.copy(action).astype(np.float32)
         cluster_probs = None
-        if self.clustering_config and hasattr(self, "current_cluster_probs"):
+        if self.clustering_config and hasattr(self, "current_trajectory_cluster_probs"):
             biases = self.clustering_config.get("cluster_biases")
             if biases is not None:
                 # biases shape: [K, Action_Dim]
                 bias_matrix = np.array(biases, dtype=np.float32)
                 # Compute dynamic bias: dot product of probs and matrix
-                dynamic_bias = np.dot(self.current_cluster_probs, bias_matrix)
+                dynamic_bias = np.dot(self.current_trajectory_cluster_probs, bias_matrix)
                 biased_action = np.clip(biased_action + dynamic_bias, -1.0, 1.0).astype(np.float32)
                 logger.debug(f"Action Biased: {action} -> {biased_action} (Bias: {dynamic_bias})")
 
@@ -203,9 +203,9 @@ class AudioAttackEnv(gym.Env):
         logger.debug(f"AASIST3 score: {score}") # Debugging statement to trace model output
         
         if self.clustering_config:
-            obs = self._get_conditioned_observation(embedding)
-            cluster_probs = obs[160:]
-            self.current_cluster_probs = cluster_probs # Store for next step biasing
+            emb_np = embedding.cpu().numpy().flatten().astype(np.float32)
+            obs = np.concatenate([emb_np, self.current_trajectory_cluster_probs]).astype(np.float32)
+            cluster_probs = self.current_trajectory_cluster_probs
         else:
             obs = self._get_obs(embedding) # Observation: The embedding from AASIST3 (160-dim)
             cluster_probs = None
@@ -279,8 +279,8 @@ class AudioAttackEnv(gym.Env):
         
         if self.clustering_config:
             obs = self._get_conditioned_observation(embeddings[0])
-            self.current_cluster_probs = obs[160:]
-            cluster_id = int(np.argmax(self.current_cluster_probs))
+            self.current_trajectory_cluster_probs = obs[160:]
+            cluster_id = int(np.argmax(self.current_trajectory_cluster_probs))
             info['cluster_id'] = cluster_id
         else:
             obs = self._get_obs(embeddings[0]) # Observation: The embedding from AASIST3 (160-dim)

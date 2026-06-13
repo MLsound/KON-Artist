@@ -109,10 +109,10 @@ def test_dynamic_noise_scaling(mock_open, mock_pickle_load, mock_detector, custo
 
     wrapped_env = VecDetectorWrapper(mock_env, mock_detector, config={"clustering": custom_clustering_config})
     
-    # Populate current cluster probs
+    # Populate current trajectory cluster probs
     # Env 0: dominant cluster 0
     # Env 1: dominant cluster 1
-    wrapped_env.current_cluster_probs = np.array([
+    wrapped_env.current_trajectory_cluster_probs = np.array([
         [1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
         [0.0, 1.0, 0.0, 0.0, 0.0, 0.0]
     ], dtype=np.float32)
