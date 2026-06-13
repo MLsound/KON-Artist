@@ -95,3 +95,49 @@ def test_wandb_audio_callback(mock_wandb_log, mock_env):
     callback.n_calls = 51
     callback._on_step()
     mock_wandb_log.assert_not_called()
+
+def test_entropy_decay_callback_global():
+    """Verify that global mode calculates decay relative to cumulative total steps."""
+    from src.utils.callbacks import EntropyDecayCallback
+    
+    mock_model = MagicMock()
+    callback = EntropyDecayCallback(
+        initial_ent_coef=0.1,
+        final_ent_coef=0.01,
+        total_timesteps=1000,
+        initial_checkpoint_steps=500,
+        session_total_steps=500,
+        mode="global"
+    )
+    callback.model = mock_model
+    
+    # At cumulative step 750 (which is 250 steps in session)
+    callback.num_timesteps = 750
+    callback._on_step()
+    
+    # Progress = 750 / 1000 = 0.75
+    # ent_coef = 0.1 + (0.01 - 0.1) * 0.75 = 0.1 - 0.09 * 0.75 = 0.0325
+    assert mock_model.ent_coef == pytest.approx(0.0325)
+
+def test_entropy_decay_callback_cycle():
+    """Verify that cycle mode calculates decay relative to current cycle steps."""
+    from src.utils.callbacks import EntropyDecayCallback
+    
+    mock_model = MagicMock()
+    callback = EntropyDecayCallback(
+        initial_ent_coef=0.1,
+        final_ent_coef=0.01,
+        total_timesteps=1000,
+        initial_checkpoint_steps=500,
+        session_total_steps=500,
+        mode="cycle"
+    )
+    callback.model = mock_model
+    
+    # At cumulative step 750 (which is 250 steps in session)
+    callback.num_timesteps = 750
+    callback._on_step()
+    
+    # Progress = (750 - 500) / 500 = 0.5
+    # ent_coef = 0.1 + (0.01 - 0.1) * 0.5 = 0.1 - 0.09 * 0.5 = 0.055
+    assert mock_model.ent_coef == pytest.approx(0.055)

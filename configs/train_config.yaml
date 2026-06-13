@@ -12,6 +12,7 @@ ppo:
   entropy:
     initial: 0.06 # Initial entropy coefficient (encourages exploration)
     final: 0.005  # Final entropy coefficient (can be decayed over time to encourage exploitation)
+    mode: "cycle" # 'global' (decay over cumulative total steps) or 'cycle' (decay relative to the current session/cycle steps)
   bonus: True # Whether to use a reward bonus for successful episodes (can be adjusted based on task requirements)
   bonus_amount: 75.0 # Multiplier for the continuous reward bonus
   policy: "MlpPolicy"

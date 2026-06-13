@@ -149,18 +149,25 @@ class EntropyDecayCallback(BaseCallback):
     Callback to progressively reduce the entropy coefficient (ent_coef) during training.
     This encourages exploration early on and exploitation later.
     """
-    def __init__(self, initial_ent_coef: float, final_ent_coef: float, total_timesteps: int, verbose: int = 0, initial_checkpoint_steps: int = 0, session_total_steps: int = None):
+    def __init__(self, initial_ent_coef: float, final_ent_coef: float, total_timesteps: int, verbose: int = 0, initial_checkpoint_steps: int = 0, session_total_steps: int = None, mode: str = "global"):
         super().__init__(verbose)
         self.initial_ent_coef = initial_ent_coef
         self.final_ent_coef = final_ent_coef
         self.total_timesteps = total_timesteps
         self.initial_checkpoint_steps = initial_checkpoint_steps
         self.session_total_steps = session_total_steps
+        self.mode = mode
 
     def _on_step(self) -> bool:
-        # Calculate the new entropy coefficient using linear decay
-        progress = self.num_timesteps / self.total_timesteps
-        new_ent_coef = self.initial_ent_coef + (self.final_ent_coef - self.initial_ent_coef) * min(1.0, progress)
+        # Calculate progress according to the selected mode
+        if self.mode == "cycle" and self.session_total_steps is not None and self.session_total_steps > 0:
+            current_cycle_step = self.num_timesteps - self.initial_checkpoint_steps
+            progress = current_cycle_step / self.session_total_steps
+        else:
+            progress = self.num_timesteps / self.total_timesteps
+            
+        progress = max(0.0, min(1.0, progress))
+        new_ent_coef = self.initial_ent_coef + (self.final_ent_coef - self.initial_ent_coef) * progress
         
         # Update the ent_coef in the PPO model
         self.model.ent_coef = new_ent_coef
