@@ -5,6 +5,9 @@ This script processes CSV logs containing training rewards and timesteps to
 visualize agent performance. It produces a high-resolution plot featuring 
 raw rewards and a smoothed moving average, specifically styled for 
 academic reports in the context of the AASIST3 Audio Spoofing attack research.
+
+Usage:
+    python -m scripts.generate_plots --csv outputs/history/rewards.csv --out outputs/convergence.png --window 100
 """
 
 import argparse
@@ -124,6 +127,4 @@ if __name__ == "__main__":
                          limit=args.limit,
                          dots=args.dots
                          )
-
-# USAGE:
-# python -m scripts.generate_plots --csv outputs/history/rewards.csv --out outputs/convergence.png --window 100
+    

@@ -182,6 +182,8 @@ class VecDetectorWrapper(VecEnvWrapper):
             # Store probabilities for step_async biasing [N, K]
             # Since this is reset, we initialize the static trajectory cluster probabilities
             self.current_trajectory_cluster_probs = cond_obs[:, 160:].astype(np.float32)
+            for i in range(self.num_envs):
+                self.venv.set_attr("current_trajectory_cluster_probs", self.current_trajectory_cluster_probs[i], indices=i)
             
         return cond_obs.astype(np.float32)
 
@@ -325,6 +327,7 @@ class VecDetectorWrapper(VecEnvWrapper):
                 # Update cached probs for the new episode
                 self.current_trajectory_cluster_probs[i] = start_c_probs
                 new_cond_obs[i] = np.concatenate([embeddings_np[i], start_c_probs])
+                self.venv.set_attr("current_trajectory_cluster_probs", start_c_probs, indices=i)
                 
                 # Reset worker logit history to prevent cross-episode stagnation detection
                 if hasattr(self, "last_logits") and self.last_logits is not None:
@@ -357,6 +360,10 @@ class VecDetectorWrapper(VecEnvWrapper):
                 prev_cluster_id = int(np.argmax(old_trajectory_cluster_probs[i]))
                 is_success = bool(score > self.success_threshold)
                 self.asr_tracker.append((prev_cluster_id, is_success))
+                try:
+                    self.venv.env_method("update_asr_tracker", prev_cluster_id, score, indices=i)
+                except Exception as e:
+                    logger.debug(f"Failed to call update_asr_tracker on worker {i}: {e}")
             
             # Extract worker-specific info for logging
             self.current_worker = infos[i].get('worker_id', 'N/A')
@@ -398,3 +405,128 @@ class VecDetectorWrapper(VecEnvWrapper):
                 
         # Return conditioned embeddings of current observations [0:num_envs]
         return new_cond_obs, np.array(new_rewards, dtype=np.float32), np.array(new_dones), infos
+
+
+class AdaptiveActionSpaceClipsWrapper(gym.Wrapper):
+    """
+    Gymnasium environment wrapper that dynamically compresses the action space
+    exploration boundaries of highly compromised acoustic clusters.
+    """
+    def __init__(self, env: gym.Env, config: dict):
+        super().__init__(env)
+        self.config = config or {}
+        self.success_threshold = getattr(env, "success_threshold", 0.50)
+        
+        # Load parameters from configuration
+        clustering_cfg = self.config.get("clustering", {})
+        self.asr_compression_threshold = float(clustering_cfg.get("asr_compression_threshold", 0.35))
+        self.max_compression_factor = float(clustering_cfg.get("max_compression_factor", 0.80))
+        self.compression_alpha = float(clustering_cfg.get("compression_alpha", 2.0))
+        self.n_clusters = int(clustering_cfg.get("n_components", 10))
+        
+        # Determine rolling window size from configuration
+        dn_cfg = clustering_cfg.get("dynamic_noise", {})
+        self.asr_window_size = int(dn_cfg.get("asr_update_window", 4096))
+        
+        # Thread-safe rolling window arrays
+        import threading
+        self._lock = threading.Lock()
+        self.asr_history = {c: np.zeros(self.asr_window_size, dtype=np.float32) for c in range(self.n_clusters)}
+        self.asr_counts = {c: 0 for c in range(self.n_clusters)}
+        self.asr_pointers = {c: 0 for c in range(self.n_clusters)}
+        
+        # Retrieve and cache cluster biases baseline
+        self.cluster_biases = clustering_cfg.get("cluster_biases", None)
+        if self.cluster_biases is not None:
+            self.cluster_biases = np.array(self.cluster_biases, dtype=np.float32)
+
+    def _get_current_cluster_id(self) -> int:
+        """Retrieves the GMM cluster ID of the current audio sample."""
+        probs = getattr(self.env, "current_trajectory_cluster_probs", None)
+        if probs is None:
+            probs = getattr(self, "current_trajectory_cluster_probs", None)
+            
+        if probs is not None:
+            return int(np.argmax(probs))
+            
+        cluster_id = getattr(self.env, "cluster_id", None)
+        if cluster_id is None:
+            cluster_id = getattr(self, "cluster_id", None)
+            
+        if cluster_id is not None:
+            return int(cluster_id)
+            
+        return 0
+
+    def update_asr_tracker(self, cluster_id: int, score: float):
+        """Updates the rolling window tracker for the specified cluster with a new step result."""
+        if cluster_id not in self.asr_history:
+            return
+        with self._lock:
+            is_success = 1.0 if score >= self.success_threshold else 0.0
+            pointer = self.asr_pointers[cluster_id]
+            self.asr_history[cluster_id][pointer] = is_success
+            self.asr_pointers[cluster_id] = (pointer + 1) % self.asr_window_size
+            self.asr_counts[cluster_id] = min(self.asr_counts[cluster_id] + 1, self.asr_window_size)
+
+    def get_asr(self, cluster_id: int) -> float:
+        """Computes the Attack Success Rate (ASR) for a cluster index."""
+        if cluster_id not in self.asr_history:
+            return 0.0
+        with self._lock:
+            count = self.asr_counts[cluster_id]
+            if count == 0:
+                return 0.0
+            return float(np.sum(self.asr_history[cluster_id][:count]) / count)
+
+    def step(self, action: np.ndarray):
+        """Intercepts action, applies contraction, and executes environment step."""
+        cluster_id = self._get_current_cluster_id()
+        exclude_clusters = self.config.get("clustering", {}).get("exclude_clusters", [])
+        
+        if cluster_id is not None and cluster_id not in exclude_clusters:
+            if self.cluster_biases is not None and cluster_id < len(self.cluster_biases):
+                b_c = self.cluster_biases[cluster_id]
+                
+                # Compute ASR
+                asr_c = self.get_asr(cluster_id)
+                
+                # Compute lambda_c
+                if asr_c <= self.asr_compression_threshold:
+                    lambda_c = 1.0
+                else:
+                    delta_c = (asr_c - self.asr_compression_threshold) / (1.0 - self.asr_compression_threshold)
+                    delta_c = np.clip(delta_c, 0.0, 1.0)
+                    lambda_c = 1.0 - (self.max_compression_factor * (delta_c ** self.compression_alpha))
+                
+                # Linearly interpolate action relative to baseline
+                action_compressed = b_c + lambda_c * (action - b_c)
+                
+                # Calculate dynamic bounds per cluster
+                min_allowed_action = b_c + lambda_c * (-1.0 - b_c)
+                max_action = b_c + lambda_c * (1.0 - b_c)
+                
+                # Log the dynamic boundary bounds per cluster
+                logger.info(
+                    "Cluster %d ASR: %.4f | Compression Scalar: %.4f | "
+                    "min_allowed_action: %s | max_action: %s",
+                    cluster_id, asr_c, lambda_c, str(min_allowed_action), str(max_action)
+                )
+                
+                obs, reward, terminated, truncated, info = self.env.step(action_compressed)
+                
+                # Add boundaries to info
+                info["min_allowed_action"] = min_allowed_action
+                info["max_action"] = max_action
+                info["compression_scalar"] = lambda_c
+                
+                if "score" in info:
+                    self.update_asr_tracker(cluster_id, info["score"])
+                    
+                return obs, reward, terminated, truncated, info
+                
+        # Excluded, fallback, or no cluster info available
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        if "score" in info and cluster_id is not None:
+            self.update_asr_tracker(cluster_id, info["score"])
+        return obs, reward, terminated, truncated, info

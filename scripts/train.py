@@ -28,7 +28,7 @@ from src.models import AASISTWrapper, SquashedGaussianActorCriticPolicy
 PPO.policy_aliases["SquashedGaussianActorCriticPolicy"] = SquashedGaussianActorCriticPolicy
 
 from src.env.audio_attack import AudioAttackEnv
-from src.env.wrappers import VecDetectorWrapper
+from src.env.wrappers import VecDetectorWrapper, AdaptiveActionSpaceClipsWrapper
 from src.utils.callbacks import RewardLoggerCallback, WandbAudioCallback, EntropyDecayCallback, LearningRateLoggerCallback
 from src.utils.logger import get_logger
 from src.utils.misc import create_timestamp
@@ -117,6 +117,9 @@ def make_env(rank: int, seed: int = 42, completed_steps: int = 0, session_total_
         # Set environment specific thresholds/limits from config
         env.success_threshold = float(cfg['env']['success_threshold'])
         env.step_limit = int(cfg['env']['step_limit'])
+        
+        # Apply Adaptive Action-Space Clipping Wrapper
+        env = AdaptiveActionSpaceClipsWrapper(env, config=cfg)
         
         return env
     return _init

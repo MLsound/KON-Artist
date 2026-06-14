@@ -40,6 +40,11 @@ clustering:
   # Specify cluster indices to omit entirely from the dataset loop
   exclude_clusters: [5]
 
+  # 3. Action-Space Boundary Contraction parameters
+  asr_compression_threshold: 0.35
+  max_compression_factor: 0.80
+  compression_alpha: 2.0
+
   # 2. Dynamic Action Noise Scaling parameters
   dynamic_noise:
     enabled: true
