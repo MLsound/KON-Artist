@@ -19,7 +19,7 @@ from pathlib import Path
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv, VecMonitor
 from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.callbacks import CheckpointCallback
+from stable_baselines3.common.callbacks import CheckpointCallback, CallbackList
 
 # Add the project root to the Python path
 sys.path.append(str(Path(__file__).parent.parent))
@@ -29,7 +29,7 @@ PPO.policy_aliases["SquashedGaussianActorCriticPolicy"] = SquashedGaussianActorC
 
 from src.env.audio_attack import AudioAttackEnv
 from src.env.wrappers import VecDetectorWrapper, AdaptiveActionSpaceClipsWrapper
-from src.utils.callbacks import RewardLoggerCallback, WandbAudioCallback, EntropyDecayCallback, LearningRateLoggerCallback
+from src.utils.callbacks import RewardLoggerCallback, WandbAudioCallback, EntropyDecayCallback, LearningRateLoggerCallback, ClusterManifoldAlignmentCallback
 from src.utils.logger import get_logger
 from src.utils.misc import create_timestamp
 
