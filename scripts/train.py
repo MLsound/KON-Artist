@@ -279,10 +279,23 @@ def train():
             name_prefix=str(checkpoint_cfg.get('name_prefix', "kon_artist_ppo"))
         )
         
+        # Manifold Alignment Callback
+        alignment_cfg = cfg.get("manifold_alignment", {})
+        alignment_callback = ClusterManifoldAlignmentCallback(
+            eval_env=env,
+            target_clusters=list(alignment_cfg.get("target_clusters", [0, 3, 9])),
+            log_freq_updates=int(alignment_cfg.get("log_freq_updates", 1)),
+            sample_size=int(alignment_cfg.get("sample_size", 128))
+        )
+        
+        # Chain callbacks using CallbackList
+        callbacks_list = [reward_callback, wandb_callback, checkpoint_callback, entropy_callback, lr_callback, alignment_callback]
+        training_callbacks = CallbackList(callbacks_list)
+        
         # 6. Training Execution
         pending_timesteps = TOTAL_TIMESTEPS - completed_steps
         if pending_timesteps <= 0:
-            logger.info(f"‼️ Target steps ({TOTAL_TIMESTEPS}) reached or exceeded by checkpoint ({completed_steps}). Training complete.")
+            logger.info(f"Target steps ({TOTAL_TIMESTEPS}) reached or exceeded by checkpoint ({completed_steps}). Training complete.")
             return
 
         time_per_step = float(cfg['logging'].get('time_per_step', 0.0))
@@ -301,7 +314,7 @@ def train():
         start_time = time.time()
         model.learn(
             total_timesteps=pending_timesteps,
-            callback=[reward_callback, wandb_callback, checkpoint_callback, entropy_callback, lr_callback],
+            callback=training_callbacks,
             reset_num_timesteps=False if latest_checkpoint else True
         )
         end_time = time.time()
