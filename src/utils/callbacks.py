@@ -224,4 +224,67 @@ class LearningRateLoggerCallback(BaseCallback):
             if self.verbose > 0:
                 logger.info(f"Step {global_step}: Current Learning Rate: {current_lr:.2e}")
         return True
+
+
+class ClusterManifoldAlignmentCallback(BaseCallback):
+    """
+    Stable-Baselines3 Callback to track policy action distribution alignment
+    relative to target vulnerability manifolds for specific acoustic clusters.
+    """
+    def __init__(self, eval_env, target_clusters=None, log_freq_updates: int = 1, sample_size: int = 128, verbose: int = 0):
+        super().__init__(verbose)
+        self.eval_env = eval_env
+        self.target_clusters = target_clusters if target_clusters is not None else [3, 9]
+        self.log_freq_updates = log_freq_updates
+        self.sample_size = sample_size
+        self.rollout_counter = 0
+
+    def _on_step(self) -> bool:
+        """Standard step event required by BaseCallback."""
+        return True
+
+    def _on_rollout_end(self) -> None:
+        """
+        Calculates and logs action distribution alignment metrics for target clusters
+        at the end of rollout collection phases.
+        """
+        self.rollout_counter += 1
+        if self.rollout_counter % self.log_freq_updates != 0:
+            return
+
+        # Determine observation dimensions from the policy network input space
+        obs_dim = self.model.observation_space.shape[0]
+
+        for cid in self.target_clusters:
+            # Generate synthetic observation vectors for the target cluster
+            obs = np.zeros((self.sample_size, obs_dim), dtype=np.float32)
+            
+            # Inject the target cluster context representation
+            if obs_dim > 160 + cid:
+                obs[:, 160 + cid] = 1.0
+            elif cid < obs_dim:
+                obs[:, cid] = 1.0
+
+            # Perform action prediction using the stochastic actor policy
+            actions, _ = self.model.policy.predict(obs, deterministic=False)
+
+            # Extract target dimensions: continuous tilt (index 2) and harmonics (index 3)
+            tilt = actions[:, 2]
+            harmonics = actions[:, 3]
+
+            # Compute empirical metrics
+            tilt_mean = np.mean(tilt)
+            tilt_std = np.std(tilt)
+            harmonics_mean = np.mean(harmonics)
+            harmonics_std = np.std(harmonics)
+
+            # Calculate the Mean Squared Error (MSE) distance to target vector [-1.0, 1.0]
+            distance = (tilt_mean - (-1.0)) ** 2 + (harmonics_mean - 1.0) ** 2
+
+            # Record results to model loggers
+            self.logger.record(f"manifold_alignment/cluster_{cid}_tilt_mean", float(tilt_mean))
+            self.logger.record(f"manifold_alignment/cluster_{cid}_harmonics_mean", float(harmonics_mean))
+            self.logger.record(f"manifold_alignment/cluster_{cid}_distance_to_target", float(distance))
+            self.logger.record(f"manifold_alignment/cluster_{cid}_tilt_std", float(tilt_std))
+            self.logger.record(f"manifold_alignment/cluster_{cid}_harmonics_std", float(harmonics_std))
     

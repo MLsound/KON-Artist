@@ -141,3 +141,78 @@ def test_entropy_decay_callback_cycle():
     # Progress = (750 - 500) / 500 = 0.5
     # ent_coef = 0.1 + (0.01 - 0.1) * 0.5 = 0.1 - 0.09 * 0.5 = 0.055
     assert mock_model.ent_coef == pytest.approx(0.055)
+
+
+def test_cluster_manifold_alignment_callback():
+    """Verify that ClusterManifoldAlignmentCallback correctly tracks, predicts and logs action shift metrics."""
+    from src.utils.callbacks import ClusterManifoldAlignmentCallback
+    import numpy as np
+    
+    # Mock model
+    mock_model = MagicMock()
+    # Observation space of size 170
+    mock_model.observation_space.shape = (170,)
+    
+    # Mock policy predict
+    # actions should have shape (sample_size, 7)
+    # Let's mock a fixed action pair: tilt = -0.8, harmonics = 0.9
+    sample_size = 10
+    mock_actions = np.zeros((sample_size, 7))
+    mock_actions[:, 2] = -0.8
+    mock_actions[:, 3] = 0.9
+    mock_model.policy.predict.return_value = (mock_actions, None)
+    
+    # Mock logger
+    mock_logger = MagicMock()
+    
+    # Mock env
+    mock_eval_env = MagicMock()
+    
+    callback = ClusterManifoldAlignmentCallback(
+        eval_env=mock_eval_env,
+        target_clusters=[3, 9],
+        log_freq_updates=2,
+        sample_size=sample_size
+    )
+    mock_model.logger = mock_logger
+    callback.model = mock_model
+    assert callback.logger is mock_logger
+    
+    # Rollout 1: self.rollout_counter becomes 1. Skip (1 % 2 != 0)
+    callback._on_rollout_end()
+    assert callback.rollout_counter == 1
+    mock_model.policy.predict.assert_not_called()
+    
+    # Rollout 2: self.rollout_counter becomes 2. Run (2 % 2 == 0)
+    callback._on_rollout_end()
+    assert callback.rollout_counter == 2
+    
+    # Predict should have been called twice (once for cluster 3, once for cluster 9)
+    assert mock_model.policy.predict.call_count == 2
+    
+    # Verify the observation input to predict
+    call_args_list = mock_model.policy.predict.call_args_list
+    # Cluster 3 prediction check
+    obs_cluster_3 = call_args_list[0][0][0]
+    assert obs_cluster_3.shape == (sample_size, 170)
+    # Check that GMM representation is one-hot at index 163
+    assert np.allclose(obs_cluster_3[:, 163], 1.0)
+    assert np.allclose(obs_cluster_3[:, :160], 0.0)
+    
+    # Cluster 9 prediction check
+    obs_cluster_9 = call_args_list[1][0][0]
+    assert obs_cluster_9.shape == (sample_size, 170)
+    # Check that GMM representation is one-hot at index 169
+    assert np.allclose(obs_cluster_9[:, 169], 1.0)
+    
+    # Verify distance computation
+    # Target anchor point: tilt = -1.0, harmonics = 1.0
+    # Mean tilt = -0.8, Mean harmonics = 0.9
+    # Distance = (-0.8 - (-1.0))**2 + (0.9 - 1.0)**2 = (0.2)**2 + (-0.1)**2 = 0.04 + 0.01 = 0.05
+    mock_logger.record.assert_any_call("manifold_alignment/cluster_3_tilt_mean", -0.8)
+    mock_logger.record.assert_any_call("manifold_alignment/cluster_3_harmonics_mean", 0.9)
+    mock_logger.record.assert_any_call("manifold_alignment/cluster_3_distance_to_target", pytest.approx(0.05))
+    
+    mock_logger.record.assert_any_call("manifold_alignment/cluster_9_tilt_mean", -0.8)
+    mock_logger.record.assert_any_call("manifold_alignment/cluster_9_harmonics_mean", 0.9)
+    mock_logger.record.assert_any_call("manifold_alignment/cluster_9_distance_to_target", pytest.approx(0.05))
