@@ -58,7 +58,7 @@ def profile_pipeline(detector, num_batches=5, batch_size=4):
     logger.info(f"Average batch latency: {avg_latency:.4f}s ({avg_latency/batch_size:.4f}s per sample)")
     return avg_latency
 
-def run_evaluation(model_path, num_samples=500):
+def run_evaluation(model_path, num_samples=500, target_gmm_id=None):
     """
     Executes the evaluation pipeline.
     """
@@ -68,6 +68,23 @@ def run_evaluation(model_path, num_samples=500):
     # 1. Load AASIST3 Detector
     logger.info("Loading AASIST3 detector...")
     detector = AASISTWrapper("MTUCI/AASIST3", device=device)
+
+    # Load clustering pipeline if target_gmm_id is requested
+    clustering_pipeline = None
+    cfg = load_config()
+    if target_gmm_id is not None:
+        import pickle
+        import warnings
+        model_path_gmm = cfg.get("clustering", {}).get("model_path", "models/gmm_registry.pkl")
+        logger.info(f"Loading GMM pipeline from {model_path_gmm} for target GMM ID {target_gmm_id}...")
+        try:
+            with open(model_path_gmm, "rb") as f:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", category=UserWarning)
+                    clustering_pipeline = pickle.load(f)
+        except FileNotFoundError:
+            logger.error(f"GMM pipeline model not found at {model_path_gmm}.")
+            raise RuntimeError(f"GMM pipeline not found at {model_path_gmm}")
 
     # 2. Load Trained Agent
     if os.path.exists(model_path) or os.path.exists(model_path + ".zip"):
@@ -83,7 +100,12 @@ def run_evaluation(model_path, num_samples=500):
     # 4. Load Test Dataset
     logger.info("Loading ASVspoof 2019 test split...")
     ds = get_asvspoof_loader(split="test")
-    test_gen = eval_generator(ds)
+    test_gen = eval_generator(
+        ds, 
+        target_gmm_id=target_gmm_id, 
+        clustering_pipeline=clustering_pipeline, 
+        detector=detector
+    )
 
     # 5. Collection Buffers
     bonafide_scores = []
@@ -236,6 +258,8 @@ if __name__ == "__main__":
                         help="Path to the trained PPO agent.")
     parser.add_argument("--samples", type=int, default=500, 
                         help="Number of samples to evaluate.")
+    parser.add_argument("--target-gmm-id", type=int, default=None,
+                        help="GMM Cluster ID to filter samples for OOD validation.")
     args = parser.parse_args()
     
-    run_evaluation(args.model, args.samples)
+    run_evaluation(args.model, args.samples, target_gmm_id=args.target_gmm_id)

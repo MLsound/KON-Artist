@@ -59,8 +59,8 @@ def generator_from_ds(shuffled_ds):
 
         yield processed, mapped_label
 
-def eval_generator(shuffled_ds):
-    """Yields all samples (Bonafide and Spoof) for evaluation."""
+def eval_generator(shuffled_ds, target_gmm_id=None, clustering_pipeline=None, detector=None):
+    """Yields all samples (Bonafide and Spoof) for evaluation, optionally filtered by GMM ID."""
     for sample in shuffled_ds:
         audio_bytes = sample["audio"]["bytes"]
 
@@ -71,5 +71,14 @@ def eval_generator(shuffled_ds):
 
         waveform, sr = torchaudio.load(io.BytesIO(audio_bytes))
         processed = preprocess_audio(waveform, sr)
+
+        if target_gmm_id is not None and detector is not None and clustering_pipeline is not None:
+            with torch.no_grad():
+                scores, embeddings = detector.get_score_and_embedding(processed)
+            emb_np = embeddings[0].cpu().numpy().reshape(1, -1)
+            probs = clustering_pipeline.predict_proba(emb_np).flatten()
+            gmm_id = int(np.argmax(probs))
+            if gmm_id != target_gmm_id:
+                continue
 
         yield processed, mapped_label

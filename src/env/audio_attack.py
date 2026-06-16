@@ -300,29 +300,11 @@ class AudioAttackEnv(gym.Env):
             exclude_clusters = self.clustering_config.get("exclude_clusters", [])
             k_dom = int(np.argmax(self.current_trajectory_cluster_probs))
             
-            retries = 0
-            max_retries = 100
-            while k_dom in exclude_clusters and retries < max_retries:
-                retries += 1
-                logger.info(f"AudioAttackEnv Reset: Sample belonged to excluded cluster {k_dom}. Discarding and loading next sample (Retry {retries}/{max_retries}).")
-                try:
-                    self.current_audio, target_label = next(self.audio_files)
-                    if target_label == 1:
-                        raise RuntimeError("CRITICAL SECURITY BREACH: Bonafide signal detected in attack pipeline.")
-                except StopIteration:
-                    logger.error("Audio stream exhausted.")
-                    raise RuntimeError("Audio stream exhausted.")
-                    
-                scores, embeddings = self.detector.get_score_and_embedding(self.current_audio)
-                score = scores[0]
-                obs = self._get_conditioned_observation(embeddings[0])
-                self.current_trajectory_cluster_probs = obs[160:]
-                k_dom = int(np.argmax(self.current_trajectory_cluster_probs))
+            if k_dom in exclude_clusters:
+                logger.info(f"AudioAttackEnv Reset: Sample belonged to excluded cluster {k_dom}. Discarding and recursively resetting...")
+                return self.reset(seed=seed, options=options)
                 
-            if retries >= max_retries:
-                logger.warning(f"AudioAttackEnv Reset: Reached max retries ({max_retries}) trying to filter excluded clusters.")
-                
-            cluster_id = int(np.argmax(self.current_trajectory_cluster_probs))
+            cluster_id = k_dom
             info['cluster_id'] = cluster_id
         else:
             obs = self._get_obs(embeddings[0]) # Observation: The embedding from AASIST3 (160-dim)
