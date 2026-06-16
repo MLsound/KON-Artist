@@ -12,14 +12,14 @@ Current state-of-the-art detectors like AASIST3 rely on KAN layers for feature t
 
 ### Repository Architecture and Logic Flow
 
-The repository follows a modular design where the **Gymnasium Environment** acts as the central hub, mediating between the RL Agent (PPO), the DSP transformations, and the frozen detector (AASIST3).
+The repository follows a modular, scalable design structured for **Batched GPU Inference**. Instead of each worker environment holding a copy of the detector, **KON-Artist** uses a centralized `VecDetectorWrapper` to intercept raw audio from multiple CPU worker environments (`AudioAttackEnv`), batch them, and perform a single, highly efficient forward pass through the frozen detector (AASIST3).
+
+Additionally, the state representation is enhanced by an **Acoustic Clustering Pipeline** (PCA + GMM) that appends soft cluster distributions to the AASIST3 embeddings, providing the agent with richer contextual conditioning.
 
 ```mermaid
 graph TD
     subgraph Scripts
         T[train.py]
-        L1[ ]
-        style L1 fill:none,stroke:none
         E[evaluate.py]
         G[generate_plots.py]
     end
@@ -27,10 +27,12 @@ graph TD
     subgraph Core_Library [src/]
         direction TB
         LDR[data/loader.py]
-        ENV[env/audio_attack.py]
+        ENV[env/audio_attack.py: CPU Workers]
+        WRP[env/wrappers.py: VecDetectorWrapper]
         DSP[synthesis/dsp.py: DSPPipeline]
         MDL[models/aasist.py: AASISTWrapper]
-        AUD[utils/audio.py: preprocess_audio]
+        CLS[data/clustering.py: GMM Pipeline]
+        AUD[utils/audio.py]
         UTL[utils/callbacks.py]
     end
 
@@ -45,10 +47,20 @@ graph TD
     AUD -->|Initial State| LDR
     LDR ==>|Batch/Stream| ENV
     
-    %% Training Logic
-    T ==> ENV
-    ENV ==> DSP
-    ENV ==> MDL
+    %% Training Logic (New Architecture)
+    T ==> WRP
+    WRP ==>|Controls| ENV
+    ENV ==>|Action| DSP
+    DSP -.->|Raw Audio| ENV
+    ENV -.->|Batched Audio| WRP
+    
+    WRP ==>|GPU Batch| MDL
+    MDL -.->|Embeddings & Scores| WRP
+    
+    WRP ==>|Embeddings| CLS
+    CLS -.->|Conditioning Probs| WRP
+    
+    WRP -.->|Obs, Reward, Done| T
     T --> UTL
     
     %% Inference & Utilities
@@ -61,11 +73,6 @@ graph TD
     %% Model Dependency
     MDL -->|Imports repo| TP
 
-    %% Logic Description
-    ENV -.->|Reward & State| T
-    DSP -.->|Modified Audio| ENV
-    MDL -.->|Scores/Embeddings| ENV
-
     %% Invisible links
     TP ~~~ HF
 ```
@@ -75,7 +82,7 @@ graph TD
 
 ```
 kon_artist/
-├── configs/                # YAML files for hyperparameters (RL, Audio)
+├── configs/                # YAML files for hyperparameters (RL, Audio, Clustering)
 ├── data/                   # Symlinks to ASVspoof datasets
 ├── docs/                   # Papers & Reports
 ├── notebooks/              # Prototyping and visualization of splines/audio
@@ -84,21 +91,26 @@ kon_artist/
 │   ├── generate_plots.py   # Generates convergence graph
 │   └── evaluate.py         # EER/Inference Metrics
 ├── src/                    # Core library
-│   ├── data/loader.py      # Data loader (AVSpoof 2019 LA)
-│   ├── env/audio_attack.py # Gymnasium wrappers for AASIST3 (Infinite Loop)
-│   ├── models/aasist.py    # Generator (Actor) architecture (KAN-based or MLPs)
-│   ├── synthesis/dsp.py    # Audio manipulation (HiFi-GAN, DSP functions)
-│   └── utils/              # Audio processing, logging, and metrics (MOS, SDR)
+│   ├── data/                 
+│   │   ├── clustering.py   # PCA+GMM embedding clustering pipeline
+│   │   └── loader.py       # Data loader (AVSpoof 2019 LA)
+│   ├── env/                  
+│   │   ├── audio_attack.py # Gymnasium worker environments
+│   │   ├── reward_logic.py # Centralized reward calculations
+│   │   └── wrappers.py     # VecDetectorWrapper for batched GPU inference
+│   ├── models/aasist.py    # AASIST3 target model wrapper
+│   ├── synthesis/dsp.py    # Audio manipulation (DSP pipeline)
+│   └── utils/              # Audio processing, logging, and metrics
 │       ├── audio.py        # Audio Preprocessing
 │       ├── callbacks.py    # Reward Logging & W&B Integration
 │       ├── metrics.py      # EER Calculations
+│       ├── misc.py         # Utilities
 │       └── logger.py       # Standardized Log-file Management
 ├── third_party/AASIST3/    # Target Model AASIST3 Repository (cloned)
-├── tests/                  # Unit tests for audio alignment and reward logic
-├── environment.yml         # Python dependencies
-├── pyproject.toml          # For 'pip install -e .'
-├── pytest.ini              # For 'pytest'
-└── root.py                 # For folder
+├── tests/                  # Unit and integration tests
+├── environment.yml         # Conda dependencies
+├── pytest.ini              # Pytest configuration and warning filters
+└── root.py                 # Project root anchor
 ```
 ---
 
@@ -166,6 +178,8 @@ Execute the main training orchestrator to begin the PPO optimization loop. This 
 python -m scripts.train
 ```
 
+> In case you want to resume previous training, refer to this [guide](docs/guides/resume-training.md).
+
 ### 2. Performance Evaluation
 Run the evaluation script to test the AASIST3 detector performance (EER) against specific datasets or to assess the success rate of the KON-Artist agent.
 ```bash
@@ -173,10 +187,24 @@ python -m scripts.evaluate
 ```
 
 ### 3. Generate Visualizations
-Once training data is available, generate convergence plots and reward history graphs for reports.
+Once training data is available, generate convergence plots and reward history graphs for reports. The script supports custom CSV paths, output locations, and smoothing windows.
 ```bash
+# Standard usage
 python -m scripts.generate_plots
+
+# Custom usage
+python -m scripts.generate_plots --csv outputs/history/rewards_custom.csv --out outputs/report_plot.png --window 100
 ```
+
+### 4. Acoustic Clustering Pipeline
+Before training with clustering conditioning, you must generate the GMM registry by analyzing the training dataset. This pipeline automatically optimizes the number of PCA components (targeting 95% variance) and GMM clusters (minimizing BIC).
+```bash
+python -m src.data.clustering
+```
+This generates:
+* `models/gmm_registry.pkl`: The serialized pipeline for use in the RL environment.
+* `outputs/plots/clustering_optimization.png`: Elbow plots for PCA and BIC scores.
+* `outputs/plots/acoustic_clusters_tsne.png`: A 2D t-SNE visualization of the discovered manifolds.
 
 -----
 
