@@ -7,6 +7,7 @@ as 'Bonafide' by the target model, with additional bonuses for successful attack
 
 The module also includes termination criteria based on the attack score and step limits.
 """
+import math
 import numpy as np
 from src.utils.logger import get_logger
 import logging
@@ -15,19 +16,32 @@ logger = get_logger(name=__file__,
                     log_file="outputs/train_session.log",
                     level=logging.INFO)  # Set to DEBUG for detailed trace during environment interactions
 
-def compute_attack_reward(score: float, self: object, dsp_params: dict = None) -> tuple:
+def stable_sigmoid(x: float) -> float:
     """
-    Standardized reward and termination logic for KON-Artist.
+    Numerically stable sigmoid function.
+    """
+    if x >= 0:
+        z = math.exp(-x)
+        return 1.0 / (1.0 + z)
+    else:
+        z = math.exp(x)
+        return z / (1.0 + z)
+
+def compute_attack_reward(score: float, self: object, dsp_params: dict = None, logit: float = None) -> tuple:
+    """
+    Standardized piecewise logit-aware reward and termination logic for KON-Artist.
     Ensures consistency between single-env and vectorized modes.
 
     Args:
         score (float): The probability of the attack being classified as 'Bonafide'.
         self (object): The environment instance (AudioAttackEnv or VecDetectorWrapper) to access thresholds and logging.
         dsp_params (dict, optional): The DSP configurations used in the current step.
+        logit (float, optional): Raw un-softmaxed logit from the detector.
 
     Returns:
         reward (float): The computed reward for the current step.
         terminated (bool): Whether the episode should be terminated based on the attack success.
+        bonus (float): The applied success bonus.
     """
     # Configuration recovery (with defaults for the Wrapper)
     success_threshold = getattr(self, "success_threshold", 0.5)
@@ -61,39 +75,44 @@ def compute_attack_reward(score: float, self: object, dsp_params: dict = None) -
     else:
         step_str = f"{current_step}"
     
-    # REWARD FUNCTION
-    # Reward: Log-probability of appearing 'Bonafide'
-    # R = log(P + epsilon) magnifies gradients for low-probability states
-    epsilon = 1e-9 # Small constant to prevent log(0) and stabilize training when scores are very low
-    vertical_shift = 25.0 # Shift to keep rewards positive for PPO stability
-    reward = float(np.log(score + epsilon)) # Logarithmic reward to create a strong gradient signal
-    logger.debug(f"Raw Score: {float(score)} | Log Reward: {reward}")
-    # Optional: Normalize it to a slightly positive/bounded scale for PPO
-    reward += vertical_shift # shift it so the minimum expected log (-25) becomes 0
-    logger.debug(f"Shifted Log Reward: {reward}") # Debugging statement to trace shifted reward calculation
-
-    # CONTINUOUS REWARD ACCELERATION
-    # Scale continuously with the AASIST3 detector's confidence score to provide a smooth gradient signal.
-    # The multiplier is controlled by the 'bonus_amount' hyperparameter.
-    bonus_enabled = getattr(self, "bonus", True)
-    if bonus_enabled:
-        bonus_amount = getattr(self, "bonus_amount", 250.0)
-        bonus_applied = float(score) * bonus_amount
-        reward += bonus_applied
-        logger.debug(f"Continuous Bonus (+{bonus_applied:.2f}) applied. Current reward: {reward}")
-    else:
+    # RECONSTRUCT LOGIT IF NOT PROVIDED
+    if logit is None:
+        epsilon_score = 1e-9
+        clipped_score = np.clip(score, epsilon_score, 1.0 - epsilon_score)
+        logit = float(np.log(clipped_score) - np.log(1.0 - clipped_score))
+    
+    epsilon = 1e-9
+    vertical_shift = 25.0
+    
+    # PIECEWISE LOGIT-AWARE REWARD
+    if logit < 0.0:
+        # Stage A: Exploration Phase
+        sig = stable_sigmoid(logit)
+        base_reward = float(np.log(sig + epsilon)) + vertical_shift
         bonus_applied = 0.0
-        logger.debug("Continuous Bonus disabled in configuration.")
+        logger.debug(f"Stage A - Logit: {logit} | Sigmoid: {sig} | Base Reward: {base_reward}")
+    else:
+        # Stage B: Exploitation Phase
+        base_reward = float(np.log(score + epsilon)) + vertical_shift
+        
+        # Capped success bonus
+        bonus_applied = 0.0
+        bonus_enabled = getattr(self, "bonus", True)
+        if bonus_enabled and float(score) > success_threshold:
+            bonus_amount = getattr(self, "bonus_amount", 250.0)
+            scaled_multiplier = math.tanh(float(score) * 2.0)
+            bonus_applied = min(bonus_amount * scaled_multiplier, bonus_amount)
+            logger.debug(f"Stage B - Success Bonus (+{bonus_applied:.2f}) applied. Reward: {base_reward + bonus_applied}")
+            
+    reward = base_reward + bonus_applied
 
     # COMPLETION CRITERIA
-    # If the score exceeds a certain threshold, we can consider the episode successful
-    terminated = bool(score > success_threshold) # Logic for completion (Agent successfully spoofed the detector)
+    terminated = bool(score > success_threshold)
     
     if terminated:
         logger.info(f"--- ATTACK SUCCESSFUL: Score {score:.4f} ---")
         
-    # Telemetry Logging
-    # Only logs specific step info if running in single-env mode
-    logger.info(f"Worker {worker_id} | Step {step_str} | Score: {score:.4f} | Reward: {reward:.2f} | Bonus: {bonus_applied:.2f} | DSP: {last_params} ")
+    # Telemetry Logging (strictly context-blind, no GMM/clusters)
+    logger.info(f"Worker {worker_id} | Step {step_str} | Score: {score:.4f} | Reward: {reward:.2f} | Bonus: {bonus_applied:.2f} | DSP: {last_params}")
 
-    return reward, terminated, bonus_applied
+    return float(reward), terminated, float(bonus_applied)

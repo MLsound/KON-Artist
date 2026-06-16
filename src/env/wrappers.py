@@ -106,3 +106,114 @@ class VecDetectorWrapper(VecEnvWrapper):
             
         # Return embeddings of current observations [0:num_envs]
         return embeddings[:self.num_envs].cpu().numpy(), np.array(new_rewards), np.array(new_dones), infos
+
+
+import threading
+from src.utils.logger import get_logger
+import logging
+
+logger = get_logger(name=__file__,
+                    log_file="outputs/train_session.log",
+                    level=logging.INFO)
+
+class AdaptiveActionSpaceClipsWrapper(gym.Wrapper):
+    """
+    Gymnasium environment wrapper that dynamically compresses the continuous action space
+    exploration boundaries based on a global rolling Attack Success Rate (ASR) threshold.
+    Anchors compression toward a global moving average of successful actions.
+    """
+    def __init__(self, env: gym.Env, config: dict):
+        super().__init__(env)
+        self.config = config or {}
+        self.success_threshold = getattr(env, "success_threshold", 0.50)
+        
+        # Load parameters from configuration
+        clip_cfg = self.config.get("clipping", {})
+        self.asr_compression_threshold = float(clip_cfg.get("asr_compression_threshold", 0.35))
+        self.max_compression_factor = float(clip_cfg.get("max_compression_factor", 0.80))
+        self.compression_alpha = float(clip_cfg.get("compression_alpha", 2.0))
+        self.asr_window_size = int(clip_cfg.get("asr_update_window", 4096))
+        
+        # Thread-safe rolling window arrays
+        self._lock = threading.Lock()
+        self.asr_history = np.zeros(self.asr_window_size, dtype=np.float32)
+        self.asr_count = 0
+        self.asr_pointer = 0
+        
+        # Buffer to track successful actions (for computing global moving average anchor)
+        action_dim = env.action_space.shape[0]
+        self.successful_actions_buffer = np.zeros((self.asr_window_size, action_dim), dtype=np.float32)
+        self.successful_actions_count = 0
+        self.successful_actions_pointer = 0
+
+    def update_trackers(self, score: float, action: np.ndarray):
+        """Updates the rolling window trackers for ASR and successful actions."""
+        with self._lock:
+            is_success = 1.0 if score >= self.success_threshold else 0.0
+            
+            # Update rolling ASR
+            self.asr_history[self.asr_pointer] = is_success
+            self.asr_pointer = (self.asr_pointer + 1) % self.asr_window_size
+            self.asr_count = min(self.asr_count + 1, self.asr_window_size)
+            
+            # If successful, track the action that led to it
+            if is_success == 1.0:
+                self.successful_actions_buffer[self.successful_actions_pointer] = action
+                self.successful_actions_pointer = (self.successful_actions_pointer + 1) % self.asr_window_size
+                self.successful_actions_count = min(self.successful_actions_count + 1, self.asr_window_size)
+
+    def get_asr(self) -> float:
+        """Computes the global rolling Attack Success Rate (ASR)."""
+        with self._lock:
+            if self.asr_count == 0:
+                return 0.0
+            return float(np.sum(self.asr_history[:self.asr_count]) / self.asr_count)
+
+    def get_successful_actions_average(self) -> np.ndarray:
+        """Computes the global moving average of successful actions."""
+        with self._lock:
+            if self.successful_actions_count == 0:
+                # Default anchor is the center of the normalized action space (all zeros)
+                return np.zeros(self.action_space.shape, dtype=np.float32)
+            return np.mean(self.successful_actions_buffer[:self.successful_actions_count], axis=0)
+
+    def step(self, action: np.ndarray):
+        """Intercepts action, applies global contraction, and executes environment step."""
+        anchor = self.get_successful_actions_average()
+        asr = self.get_asr()
+        
+        # Calculate compression factor lambda based on global ASR
+        if asr <= self.asr_compression_threshold:
+            lambda_val = 1.0
+        else:
+            delta = (asr - self.asr_compression_threshold) / (1.0 - self.asr_compression_threshold)
+            delta = np.clip(delta, 0.0, 1.0)
+            lambda_val = 1.0 - (self.max_compression_factor * (delta ** self.compression_alpha))
+        
+        # Contract action space limits and compute compressed action
+        action_compressed = anchor + lambda_val * (action - anchor)
+        action_compressed = np.clip(action_compressed, self.env.action_space.low, self.env.action_space.high)
+        
+        # Compute dynamic bounds relative to action space low/high
+        min_allowed_action = anchor + lambda_val * (self.env.action_space.low - anchor)
+        max_action = anchor + lambda_val * (self.env.action_space.high - anchor)
+        
+        # Log the global contraction metrics
+        logger.info(
+            "Global ASR: %.4f | Compression Scalar: %.4f | Min Bound: %s | Max Bound: %s",
+            asr, lambda_val, str(min_allowed_action), str(max_action)
+        )
+        
+        # Execute environment step using the compressed action
+        obs, reward, terminated, truncated, info = self.env.step(action_compressed)
+        
+        # Update rolling windows based on step outcome
+        if "score" in info:
+            self.update_trackers(info["score"], action_compressed)
+            
+        # Expose contraction boundary telemetry in info dictionary
+        info["min_allowed_action"] = min_allowed_action
+        info["max_action"] = max_action
+        info["compression_scalar"] = lambda_val
+        
+        return obs, reward, terminated, truncated, info
