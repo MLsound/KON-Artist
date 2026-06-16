@@ -288,9 +288,28 @@ def train():
             sample_size=int(alignment_cfg.get("sample_size", 128))
         )
         
-        # Chain callbacks using CallbackList
-        callbacks_list = [reward_callback, wandb_callback, checkpoint_callback, entropy_callback, lr_callback, alignment_callback]
-        training_callbacks = CallbackList(callbacks_list)
+        # Verify which operational training callbacks are active
+        callbacks_list = []
+        if reward_callback is not None:
+            callbacks_list.append(reward_callback)
+        if wandb_callback is not None:
+            callbacks_list.append(wandb_callback)
+        if checkpoint_callback is not None:
+            callbacks_list.append(checkpoint_callback)
+        if entropy_callback is not None:
+            callbacks_list.append(entropy_callback)
+        if lr_callback is not None:
+            callbacks_list.append(lr_callback)
+        if alignment_callback is not None:
+            callbacks_list.append(alignment_callback)
+            
+        # Wrap active callbacks in CallbackList if multiple exist
+        if len(callbacks_list) > 1:
+            training_callbacks = CallbackList(callbacks_list)
+        elif len(callbacks_list) == 1:
+            training_callbacks = callbacks_list[0]
+        else:
+            training_callbacks = None
         
         # 6. Training Execution
         pending_timesteps = TOTAL_TIMESTEPS - completed_steps
