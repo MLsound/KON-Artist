@@ -14,7 +14,7 @@ import matplotlib.pyplot as plt
 from src.utils.logger import get_logger
 
 logger = get_logger(name=__file__,
-                    log_file="outputs/metrics_session.log")
+                    log_file="outputs/logs/metrics_session.log")
 
 def generate_report_plot(csv_path: str, output_path: str, window_size: int = 50, limit: int = 0, dots: bool = False):
     """

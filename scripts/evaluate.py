@@ -27,7 +27,7 @@ import logging
 
 # Initialize logger
 logger = get_logger(name=__file__,
-                    log_file="outputs/eval_session.log",
+                    log_file="outputs/logs/eval_session.log",
                     level=logging.INFO)
 
 def profile_pipeline(detector, num_batches=5, batch_size=4):
