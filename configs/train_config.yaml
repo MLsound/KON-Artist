@@ -3,15 +3,15 @@
 
 # PPO Hyperparameters
 ppo:
-  total_updates: 150 # Total number of PPO updates (each update processes N_STEPS)
+  total_updates: 160 # Total number of PPO updates (each update processes N_STEPS)
   n_steps: 4096 # 2048 is PPO's default rollout buffer size; adjust if using a custom buffer implementation
   epochs: 4 # Number of epochs per PPO update (default is 4 in stable-baselines3)
   batch_size: 512 # Batch size for PPO updates (default is 64 in stable-baselines3, but can be adjusted based on memory constraints)
   clip_range: 0.15 # PPO clipping parameter (default is 0.2, but can be adjusted for stability)
   learning_rate: 0.00015 # Learning rate for PPO optimizer (default is 0.0003 in stable-baselines3)
   entropy:
-    initial: 0.12 # Initial entropy coefficient (encourages exploration)
-    final: 0.03  # Final entropy coefficient (can be decayed over time to encourage exploitation)
+    initial: 0.08 # Initial entropy coefficient (encourages exploration)
+    final: 0.01  # Final entropy coefficient (can be decayed over time to encourage exploitation)
     mode: "cycle" # 'global' (decay over cumulative total steps) or 'cycle' (decay relative to the current session/cycle steps)
   bonus: True # Whether to use a reward bonus for successful episodes (can be adjusted based on task requirements)
   bonus_amount: 75.0 # Multiplier for the continuous reward bonus
@@ -38,10 +38,10 @@ clustering:
   
   # 1. Cluster Exclusion Configuration
   # Specify cluster indices to omit entirely from the dataset loop
-  exclude_clusters: [2, 5, 6, 7] # Based on RUN 20260614_003526)
+  exclude_clusters: [5, 6, 7] # Re-introduce Cluster 2
 
   # 3. Action-Space Boundary Contraction parameters
-  asr_compression_threshold: 0.25 # Lowered from 0.35 to catch Cluster 1 (26.95% ASR) and initiate contraction
+  asr_compression_threshold: 0.20 # Lowered from 0.35 to catch Cluster 1 (26.95% ASR) and initiate contraction
   max_compression_factor: 0.85     # Contract action bounds aggressively to drive exploration out of easy zones
   compression_alpha: 1.5           # Linear-concave boundary shift multiplier
 
@@ -57,7 +57,7 @@ clustering:
   inverse_frequency_multipliers:
     0: 1.08
     1: 7.12
-    2: 3.50  # Excluded cluster
+    2: 3.50
     3: 1.00
     4: 2.39
     5: 1.16  # Excluded cluster
@@ -66,19 +66,19 @@ clustering:
     8: 1.64
     9: 2.59
 
-  # B) Cluster-Conditioned Translation Matrix (Seeded from RUN 20260614_003526)
+  # B) Cluster-Conditioned Translation Matrix (Seeded from RUN 20260616_134732)
   # Default starting signature [jitter, shimmer, tilt, harmonics, threshold, ratio, bitrate] per cluster
   cluster_biases:
-    - [-0.53, 1.00, -1.00, 0.34, 0.36, -1.00, 0.96]   # Cluster 0
-    - [-0.41, 0.45, -0.83, 0.61, 0.35, -0.89, 0.84]   # Cluster 1
-    - [0.32, -0.01, -0.71, 0.51, 0.35, -0.94, 0.12]   # Cluster 2 (Excluded)
+    - [-0.66, 0.77, -0.98, 0.58, 0.46, -1.00, 0.90]   # Cluster 0
+    - [-0.86, 0.09, -0.77, 0.67, 0.44, -1.00, 0.93]   # Cluster 1
+    - [0.32, -0.01, -0.71, 0.51, 0.35, -0.94, 0.12]   # Cluster 2 (Re-included, baseline preserved)
     - [-0.59, 0.67, -0.78, 1.00, 0.30, -0.85, -0.68]  # Cluster 3 -> Captures downsampling mapping
-    - [-0.70, 0.43, -0.93, 0.92, 0.41, -0.93, 0.73]   # Cluster 4
+    - [-0.38, 0.58, -0.87, 0.83, 0.54, -0.99, 0.94]   # Cluster 4
     - [-0.38, -0.23, -0.75, 0.72, 0.37, -0.84, 0.40]  # Cluster 5 (Baseline)
     - [-0.25, 0.02, -0.51, 0.70, 0.35, -0.90, 0.11]   # Cluster 6 (Excluded)
     - [-0.13, -0.17, -0.88, 0.29, -0.14, -0.72, 0.43] # Cluster 7 (Excluded)
-    - [-0.37, -0.06, -0.70, 0.77, 0.66, -0.91, 0.53]  # Cluster 8
-    - [-1.00, 1.00, 0.11, -0.46, 1.00, -1.00, 1.00]   # Cluster 9
+    - [-0.64, 0.25, -0.91, 0.80, 0.52, -1.00, 0.45]   # Cluster 8
+    - [-0.23, 1.00, -0.92, 0.58, 1.00, -1.00, 0.45]   # Cluster 9
 
   # C) Auxiliary Reward Shaping Configuration
   auxiliary_reward:
@@ -96,7 +96,7 @@ logging:
   log_dir: "outputs/"
   tensorboard_log: null # Set to a path if tensorboard is needed
   reward_log_freq: 1 # Log rewards every N updates (will be converted to steps in script)
-  time_per_step: 0.17842 # Average time per step in seconds for estimation 
+  time_per_step: 0.17486 # Average time per step in seconds for estimation 
   checkpoint:
     save_freq: 1 # Number of PPO UPDATES between checkpoints (will be converted to steps in script)
     save_path: "outputs/checkpoints/"
