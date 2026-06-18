@@ -16,7 +16,7 @@ from src.utils.logger import get_logger
 import logging
 
 logger = get_logger(name=__file__,
-                    log_file="outputs/train_session.log",
+                    log_file="outputs/logs/train_session.log",
                     level=logging.INFO)  # Set to DEBUG for detailed trace during environment interactions
 
 class AudioAttackEnv(gym.Env):

@@ -21,7 +21,7 @@ import logging
 
 # Initialize logger
 logger = get_logger(name=__file__,
-                    log_file="outputs/baseline_eval.log",
+                    log_file="outputs/logs/baseline_eval.log",
                     level=logging.INFO)
 
 def evaluate(model_path, data_dir, protocol_path, scores_out=None, device="cuda"):

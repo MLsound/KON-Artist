@@ -23,7 +23,7 @@ import logging
 
 # Initialize logger
 logger = get_logger(name=__file__,
-                    log_file="outputs/eval_session.log",
+                    log_file="outputs/logs/eval_session.log",
                     level=logging.INFO)
 
 def run_generation(model_path, num_samples=10, output_dir="outputs/attack_samples/"):

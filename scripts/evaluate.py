@@ -30,7 +30,7 @@ from src.utils.misc import create_timestamp
 
 # Initialize logger
 logger = get_logger(name=__file__,
-                    log_file="outputs/eval_session.log",
+                    log_file="outputs/logs/eval_session.log",
                     level=logging.INFO)
 
 def load_config(config_path="configs/train_config.yaml"):
