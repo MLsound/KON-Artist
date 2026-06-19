@@ -174,8 +174,8 @@ if __name__ == "__main__":
                         help="Number of samples to generate.")
     parser.add_argument("--out", type=str, default="outputs/attack_samples/", 
                         help="Directory to save generated samples.")
-    parser.add_argument("--model_type", type=str, default="base", choices=["base", "legacy", "acp"],
-                        help="The architecture model type (base, legacy, acp).")
+    parser.add_argument("--model_type", type=str, default="base", choices=["base", "pik", "acp"],
+                        help="The architecture model type (base, pik, acp).")
     
     args = parser.parse_args()
     run_generation(args.model, args.samples, args.out, args.model_type)
