@@ -75,7 +75,18 @@ def run_evaluation(model_path, num_samples=500, target_gmm_id=None):
     if target_gmm_id is not None:
         import pickle
         import warnings
-        model_path_gmm = cfg.get("clustering", {}).get("model_path", "models/gmm_registry.pkl")
+        model_path_gmm = "models/gmm_registry.pkl"
+        if os.path.exists("configs/eval_config.yaml"):
+            try:
+                import yaml
+                with open("configs/eval_config.yaml", "r") as f:
+                    eval_cfg = yaml.safe_load(f)
+                    model_path_gmm = eval_cfg.get("paths", {}).get("gmm_path", model_path_gmm)
+            except Exception as e:
+                logger.warning(f"Could not load configs/eval_config.yaml: {e}")
+        else:
+            model_path_gmm = cfg.get("clustering", {}).get("model_path", "models/gmm_registry.pkl")
+            
         logger.info(f"Loading GMM pipeline from {model_path_gmm} for target GMM ID {target_gmm_id}...")
         try:
             with open(model_path_gmm, "rb") as f:

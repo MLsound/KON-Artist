@@ -26,7 +26,7 @@ logger = get_logger(name=__file__,
                     log_file="outputs/logs/eval_session.log",
                     level=logging.INFO)
 
-def run_generation(model_path, num_samples=10, output_dir="outputs/attack_samples/"):
+def run_generation(model_path, num_samples=10, output_dir="outputs/attack_samples/", model_type="base"):
     """
     Loads a trained agent and generates modified audio samples.
     """
@@ -50,16 +50,44 @@ def run_generation(model_path, num_samples=10, output_dir="outputs/attack_sample
     ds = get_asvspoof_loader(split="validation")
     audio_gen = generator_from_ds(ds)
 
-    # 4. Initialize Environment
-    # Note: Using detector=detector allows tracking the score during generation
-    env = AudioAttackEnv(detector=detector, audio_files=audio_gen)
+    # 4. Resolve clustering config and GMM pipeline if running ACP
+    clustering_config = None
+    clustering_pipeline = None
+    if model_type == "acp":
+        import pickle
+        import warnings
+        gmm_path = "models/gmm_registry.pkl"
+        if os.path.exists("configs/eval_config.yaml"):
+            try:
+                import yaml
+                with open("configs/eval_config.yaml", "r") as f:
+                    eval_cfg = yaml.safe_load(f)
+                    gmm_path = eval_cfg.get("paths", {}).get("gmm_path", gmm_path)
+            except Exception as e:
+                logger.warning(f"Could not load configs/eval_config.yaml: {e}")
+        
+        clustering_config = {"model_path": gmm_path}
+        logger.info(f"Loading GMM pipeline from {gmm_path}...")
+        try:
+            with open(gmm_path, "rb") as f:
+                with warnings.catch_warnings():
+                    warnings.simplefilter("ignore", category=UserWarning)
+                    clustering_pipeline = pickle.load(f)
+        except FileNotFoundError:
+            logger.error(f"GMM pipeline model not found at {gmm_path}.")
+            raise RuntimeError(f"GMM pipeline not found at {gmm_path}")
 
-    # 5. Prepare Output Directory
+    # 5. Initialize Environment
+    # Note: Using detector=detector allows tracking the score during generation
+    env = AudioAttackEnv(detector=detector, audio_files=audio_gen, clustering_config=clustering_config)
+
+    # 6. Prepare Output Directory
     os.makedirs(output_dir, exist_ok=True)
     metadata = []
     successful_attack_configs = [] # List to store DSP parameters of successful attacks
+    cluster_mappings = []
 
-    logger.info(f"Generating {num_samples} attack samples...")
+    logger.info(f"Generating {num_samples} attack samples with model type {model_type}...")
     for i in tqdm(range(num_samples)):
         obs, info = env.reset()
         initial_score = info['score']
@@ -88,6 +116,15 @@ def run_generation(model_path, num_samples=10, output_dir="outputs/attack_sample
         # Save as 16kHz mono (AASIST3 standard)
         torchaudio.save(save_path, modified_audio.cpu(), 16000)
         
+        # Extract cluster ID if running ACP
+        if model_type == "acp" and clustering_pipeline is not None:
+            with torch.no_grad():
+                _, embeddings = detector.get_score_and_embedding(env.current_audio)
+            emb_np = embeddings[0].cpu().numpy().reshape(1, -1)
+            probs = clustering_pipeline.predict_proba(emb_np).flatten()
+            cluster_id = int(np.argmax(probs))
+            cluster_mappings.append((filename, cluster_id))
+
         # Track metadata
         metadata.append({
             "sample_index": i,
@@ -115,6 +152,16 @@ def run_generation(model_path, num_samples=10, output_dir="outputs/attack_sample
     with open(success_configs_path, "w") as f:
         json.dump(successful_attack_configs, f, indent=4)
 
+    # Save cluster map if running ACP
+    if model_type == "acp" and cluster_mappings:
+        import csv
+        csv_path = os.path.join(output_dir, "cluster_map.csv")
+        with open(csv_path, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(["filename", "cluster_id"])
+            writer.writerows(cluster_mappings)
+        logger.info(f"Saved {len(cluster_mappings)} cluster predictions to {csv_path}")
+
     logger.info(f"Generation complete. Metadata and {len(successful_attack_configs)} success configs saved to {output_dir}")
     print(f"\nSuccessfully generated {num_samples} samples.")
     print(f"Recorded {len(successful_attack_configs)} successful attacks in {success_configs_path}")
@@ -127,9 +174,8 @@ if __name__ == "__main__":
                         help="Number of samples to generate.")
     parser.add_argument("--out", type=str, default="outputs/attack_samples/", 
                         help="Directory to save generated samples.")
+    parser.add_argument("--model_type", type=str, default="base", choices=["base", "legacy", "acp"],
+                        help="The architecture model type (base, legacy, acp).")
     
     args = parser.parse_args()
-    run_generation(args.model, args.samples, args.out)
-
-# USAGE:
-# python -m scripts.generate_attack_samples --model outputs/weights/kon_artist_agent_20260425_142549 --samples 20
+    run_generation(args.model, args.samples, args.out, args.model_type)

@@ -1,0 +1,532 @@
+"""
+Vectorized Wrappers for KON-Artist Environments.
+
+This module provides wrappers for Stable-Baselines3 vectorized environments,
+enabling batched inference for the AASIST3 detector. This decouples
+expensive GPU-based model execution from CPU-based DSP transformations,
+maximizing throughput during RL training.
+"""
+import numpy as np
+import torch
+import gymnasium as gym
+from stable_baselines3.common.vec_env import VecEnvWrapper
+from src.env.reward_logic import compute_attack_reward
+from src.utils.logger import get_logger
+import logging
+
+logger = get_logger(name=__file__, level=logging.INFO)
+
+class VecDetectorWrapper(VecEnvWrapper):
+    """
+    VecEnvWrapper that performs batched detector inference on observations.
+    
+    Expects the underlying environment to return raw audio waveforms as observations.
+    Transforms these waveforms into AASIST3 embeddings for the RL agent.
+    """
+    def __init__(self, venv, detector, bonus: bool = True, bonus_amount: float = 250.0, config: dict = None, initial_checkpoint_steps: int = 0, session_total_steps: int = None):
+        super().__init__(venv)
+        self.detector = detector
+        self.bonus = bonus
+        self.bonus_amount = bonus_amount
+        self.config = config or {}
+        self.initial_checkpoint_steps = initial_checkpoint_steps
+        self.session_total_steps = session_total_steps
+        
+        # Acoustic Clustering Configuration
+        self.clustering_config = self.config.get('clustering', None)
+        obs_dim = 160
+        if self.clustering_config:
+            # Eagerly load the pipeline to determine the actual number of clusters
+            import pickle
+            import warnings
+            try:
+                with open(self.clustering_config["model_path"], "rb") as f:
+                    with warnings.catch_warnings():
+                        warnings.simplefilter("ignore", category=UserWarning)
+                        self.clustering_pipeline = pickle.load(f)
+                
+                # Determine n_clusters from the GMM step in the pipeline
+                n_clusters = self.clustering_pipeline.named_steps['gmm'].n_components
+                obs_dim += n_clusters
+                logger.info(f"Clustering enabled for VecDetectorWrapper. Clusters detected: {n_clusters}")
+            except (FileNotFoundError, KeyError) as e:
+                logger.error(f"Failed to load clustering pipeline: {e}")
+                # Fallback to 4 clusters if model is missing
+                obs_dim += 4
+            
+        # Override observation space to be the embedding space (+ clustering context)
+        self.observation_space = gym.spaces.Box(
+            low=-1e5, high=1e5, shape=(obs_dim,), dtype=np.float32
+        )
+        self.success_threshold = 0.5
+        
+        # Initialize step counter from completed_steps to maintain global progress on resume
+        self.total_steps = self.config.get('ppo', {}).get('completed_steps', 0) 
+        
+        # Load Cluster Biases (Translation Matrix)
+        self.bias_matrix = None
+        if self.clustering_config and "cluster_biases" in self.clustering_config:
+            self.bias_matrix = np.array(self.clustering_config["cluster_biases"], dtype=np.float32)
+            logger.info(f"Cluster-Conditioned Translation Matrix loaded. Shape: {self.bias_matrix.shape}")
+            
+        self.current_trajectory_cluster_probs = None
+        
+        # Cluster Exclusion Configuration
+        self.exclude_clusters = []
+        if self.clustering_config and "exclude_clusters" in self.clustering_config:
+            self.exclude_clusters = list(self.clustering_config["exclude_clusters"])
+            logger.info(f"Loaded cluster exclusion list: {self.exclude_clusters}")
+
+        # Dynamic Noise Scaling Configuration
+        import collections
+        self.dynamic_noise_enabled = False
+        self.exploration_floor = 0.3
+        self.exploration_ceiling = 1.8
+        self.asr_update_window = 4096
+        
+        if self.clustering_config and "dynamic_noise" in self.clustering_config:
+            dn_cfg = self.clustering_config["dynamic_noise"]
+            self.dynamic_noise_enabled = dn_cfg.get("enabled", False)
+            self.exploration_floor = float(dn_cfg.get("exploration_floor", 0.3))
+            self.exploration_ceiling = float(dn_cfg.get("exploration_ceiling", 1.8))
+            self.asr_update_window = int(dn_cfg.get("asr_update_window", 4096))
+            logger.info(f"Dynamic Noise Scaling config: enabled={self.dynamic_noise_enabled}, "
+                        f"floor={self.exploration_floor}, ceiling={self.exploration_ceiling}, "
+                        f"window={self.asr_update_window}")
+            
+        self.asr_tracker = collections.deque(maxlen=self.asr_update_window)
+        self.last_raw_actions = None
+        self.last_conditioned_actions = None
+        self.last_logits = None
+
+    def _get_conditioned_observations(self, embeddings):
+        """
+        Batched context injection for vectorized observations.
+        """
+        if self.clustering_config is None:
+            return embeddings.cpu().numpy().astype(np.float32)
+            
+        # Pipeline is now eagerly loaded in __init__
+        embeddings_np = embeddings.cpu().numpy()
+        cluster_probs = self.clustering_pipeline.predict_proba(embeddings_np).astype(np.float32)
+        
+        # Concatenate and cast to float32
+        unified_obs = np.concatenate([embeddings_np, cluster_probs], axis=1)
+        return unified_obs.astype(np.float32)
+
+    def _filter_excluded_clusters(self, obs, cond_obs, indices_to_check, infos=None):
+        """
+        Checks if the dominant cluster of the starting observation for the specified environment indices
+        is in the exclude_clusters list. If so, recursively resets them until a valid sample is secured.
+        Updates obs, cond_obs, and the underlying venv's buf_obs.
+        """
+        if not self.exclude_clusters or self.clustering_config is None:
+            return obs, cond_obs
+
+        for i in indices_to_check:
+            retries = 0
+            max_retries = 100
+            
+            # Dominant cluster: argmax of soft probabilities (which are after embedding size 160)
+            k_dom = int(np.argmax(cond_obs[i, 160:]))
+            
+            while k_dom in self.exclude_clusters and retries < max_retries:
+                retries += 1
+                logger.info(f"Worker {i}: Sample belonged to excluded cluster {k_dom}. Discarding and resetting (Retry {retries}/{max_retries}).")
+                
+                # Reset environment i
+                res = self.venv.env_method("reset", indices=i)
+                # env_method("reset") returns [(raw_audio, info)]
+                raw_audio_i, info_i = res[0]
+                
+                # Get AASIST3 score and embedding for the new sample
+                waveform_i = torch.from_numpy(raw_audio_i).unsqueeze(0).unsqueeze(1).float()
+                _, embedding_i = self.detector.get_score_and_embedding(waveform_i)
+                cond_obs_i = self._get_conditioned_observations(embedding_i)[0]
+                
+                # Update variables
+                obs[i] = raw_audio_i
+                cond_obs[i] = cond_obs_i
+                k_dom = int(np.argmax(cond_obs_i[160:]))
+                
+                if infos is not None and i < len(infos):
+                    infos[i].update(info_i)
+                
+                # Sync raw audio in venv.buf_obs
+                if hasattr(self.venv, "buf_obs"):
+                    for key in self.venv.buf_obs.keys():
+                        if key is None:
+                            self.venv.buf_obs[None][i] = raw_audio_i
+                        else:
+                            self.venv.buf_obs[key][i] = raw_audio_i
+                            
+            if retries >= max_retries:
+                logger.warning(f"Worker {i}: Reached max retries ({max_retries}) trying to filter excluded clusters. Moving on to prevent stall.")
+
+        return obs, cond_obs
+
+    def reset(self):
+        """Batched reset for all environments."""
+        self.last_logits = [None] * self.num_envs
+        obs = self.venv.reset()
+        # obs is [N_ENVS, 64600]
+        waveform = torch.from_numpy(obs).unsqueeze(1).float() # [N, 1, L]
+        
+        _, embeddings = self.detector.get_score_and_embedding(waveform)
+        cond_obs = self._get_conditioned_observations(embeddings)
+        
+        if self.exclude_clusters:
+            obs, cond_obs = self._filter_excluded_clusters(obs, cond_obs, range(self.num_envs))
+        
+        if self.clustering_config is not None:
+            # Store probabilities for step_async biasing [N, K]
+            # Since this is reset, we initialize the static trajectory cluster probabilities
+            self.current_trajectory_cluster_probs = cond_obs[:, 160:].astype(np.float32)
+            for i in range(self.num_envs):
+                self.venv.set_attr("current_trajectory_cluster_probs", self.current_trajectory_cluster_probs[i], indices=i)
+            
+        return cond_obs.astype(np.float32)
+
+    def step_async(self, actions: np.ndarray) -> None:
+        """Override step_async to apply dynamic noise scaling and cluster-conditioned biasing before passing to base envs."""
+        raw_actions = actions.copy().astype(np.float32)
+        
+        # 1. Compute dynamic noise scaling
+        if self.dynamic_noise_enabled:
+            import collections
+            asr_cache = {}
+            if len(self.asr_tracker) > 0:
+                total_counts = collections.defaultdict(int)
+                success_counts = collections.defaultdict(int)
+                for k, success in self.asr_tracker:
+                    total_counts[k] += 1
+                    if success:
+                        success_counts[k] += 1
+                for k in total_counts:
+                    asr_cache[k] = success_counts[k] / total_counts[k]
+            
+            omegas = []
+            for i in range(self.num_envs):
+                # get dominant cluster for env i (from cached static trajectory probs!)
+                if self.current_trajectory_cluster_probs is not None:
+                    k = int(np.argmax(self.current_trajectory_cluster_probs[i]))
+                else:
+                    k = 0
+                
+                asr_k = asr_cache.get(k, 0.0)
+                omega_k = np.clip(
+                    self.exploration_ceiling * (1.0 - asr_k) + self.exploration_floor,
+                    self.exploration_floor,
+                    self.exploration_ceiling
+                )
+                omegas.append(omega_k)
+            
+            omegas = np.array(omegas, dtype=np.float32)[:, np.newaxis]
+            conditioned_actions = np.clip(raw_actions * omegas, -1.0, 1.0).astype(np.float32)
+        else:
+            conditioned_actions = raw_actions.copy()
+            
+        # 2. Apply bias matrix if enabled (using cached static trajectory probs!)
+        if self.bias_matrix is not None and self.current_trajectory_cluster_probs is not None:
+            dynamic_biases = np.matmul(self.current_trajectory_cluster_probs, self.bias_matrix).astype(np.float32)
+            final_actions = np.clip(conditioned_actions + dynamic_biases, -1.0, 1.0).astype(np.float32)
+        else:
+            final_actions = conditioned_actions.astype(np.float32)
+            
+        self.last_raw_actions = raw_actions
+        self.last_conditioned_actions = conditioned_actions
+        
+        self.venv.step_async(final_actions)
+
+    def step_wait(self):
+        """Batched step wait for all environments."""
+        obs, rewards, dones, infos = self.venv.step_wait()
+        # obs is [N_ENVS, 64600]
+        self.total_steps += self.num_envs
+        
+        # Save old trajectory cluster probs for reward/terminal obs calculation
+        old_trajectory_cluster_probs = None
+        if self.current_trajectory_cluster_probs is not None:
+            old_trajectory_cluster_probs = self.current_trajectory_cluster_probs.copy()
+        
+        # Prepare waveforms for batch inference
+        # 1. Current observations (for next step or if it just finished)
+        waveforms = [torch.from_numpy(o).unsqueeze(0) for o in obs]
+        # 2. Terminal observations (if an environment was reset by SubprocVecEnv)
+        terminal_map = {} # Maps env_idx to position in waveforms list for terminal obs
+        
+        for i, done in enumerate(dones):
+            if done and "terminal_observation" in infos[i]:
+                term_obs = infos[i]["terminal_observation"]
+                terminal_map[i] = len(waveforms)
+                waveforms.append(torch.from_numpy(term_obs).unsqueeze(0))
+        
+        # Combined batch inference
+        batch_waveform = torch.cat(waveforms, dim=0).unsqueeze(1).float() # [Total, 1, L]
+        try:
+            detector_res = self.detector.get_score_and_embedding(batch_waveform, return_logits=True)
+        except TypeError:
+            detector_res = self.detector.get_score_and_embedding(batch_waveform)
+            
+        if len(detector_res) == 3:
+            scores, logits, embeddings = detector_res
+        else:
+            scores, embeddings = detector_res
+            # Fallback reconstruction of logits
+            epsilon_score = 1e-9
+            clipped_scores = np.clip(scores, epsilon_score, 1.0 - epsilon_score)
+            logits = np.log(clipped_scores) - np.log(1.0 - clipped_scores)
+            
+        embeddings_np = embeddings.cpu().numpy().astype(np.float32)
+        
+        # Create array for the next observations returned by step_wait
+        new_cond_obs = np.zeros((self.num_envs, self.observation_space.shape[0]), dtype=np.float32)
+        
+        # Process resets/ingestion filtering and update self.current_trajectory_cluster_probs
+        for i in range(self.num_envs):
+            if dones[i]:
+                # Environment auto-reset inside self.venv.step_wait().
+                # obs[i] and embeddings[i] are the starting sample of the new episode.
+                # Run GMM on this start sample and filter
+                start_emb = embeddings_np[i:i+1] # keep 2D shape
+                start_c_probs = self.clustering_pipeline.predict_proba(start_emb).astype(np.float32)[0]
+                
+                k_dom = int(np.argmax(start_c_probs))
+                retries = 0
+                max_retries = 100
+                
+                while k_dom in self.exclude_clusters and retries < max_retries:
+                    retries += 1
+                    logger.info(f"Worker {i}: Auto-reset sample belonged to excluded cluster {k_dom}. Discarding and resetting (Retry {retries}/{max_retries}).")
+                    
+                    res = self.venv.env_method("reset", indices=i)
+                    raw_audio_i, info_i = res[0]
+                    infos[i].update(info_i)
+                    
+                    obs[i] = raw_audio_i
+                    
+                    # Sync venv.buf_obs
+                    if hasattr(self.venv, "buf_obs"):
+                        for key in self.venv.buf_obs.keys():
+                            if key is None:
+                                self.venv.buf_obs[None][i] = raw_audio_i
+                            else:
+                                self.venv.buf_obs[key][i] = raw_audio_i
+                                
+                    waveform_i = torch.from_numpy(raw_audio_i).unsqueeze(0).unsqueeze(1).float()
+                    _, embedding_i = self.detector.get_score_and_embedding(waveform_i)
+                    
+                    embeddings_np[i] = embedding_i.cpu().numpy().astype(np.float32)[0]
+                    start_emb = embeddings_np[i:i+1]
+                    start_c_probs = self.clustering_pipeline.predict_proba(start_emb).astype(np.float32)[0]
+                    k_dom = int(np.argmax(start_c_probs))
+                    
+                if retries >= max_retries:
+                    logger.warning(f"Worker {i}: Reached max retries ({max_retries}) trying to filter excluded clusters during auto-reset.")
+                
+                # Update cached probs for the new episode
+                self.current_trajectory_cluster_probs[i] = start_c_probs
+                new_cond_obs[i] = np.concatenate([embeddings_np[i], start_c_probs])
+                self.venv.set_attr("current_trajectory_cluster_probs", start_c_probs, indices=i)
+                
+                # Reset worker logit history to prevent cross-episode stagnation detection
+                if hasattr(self, "last_logits") and self.last_logits is not None:
+                    if i < len(self.last_logits):
+                        self.last_logits[i] = None
+            else:
+                # Ongoing episode: use cached static probs
+                new_cond_obs[i] = np.concatenate([embeddings_np[i], self.current_trajectory_cluster_probs[i]])
+
+        new_rewards = []
+        new_dones = []
+        
+        for i in range(self.num_envs):
+            # If the environment finished in the worker, the reward for the STEP 
+            # that just finished must come from the 'terminal_observation'.
+            if i in terminal_map:
+                idx = terminal_map[i]
+                score = scores[idx]
+                logit = logits[idx]
+                c_probs = old_trajectory_cluster_probs[i] if old_trajectory_cluster_probs is not None else None
+                # Replace terminal raw audio with conditioned embedding to prevent crash in SB3
+                infos[i]["terminal_observation"] = np.concatenate([embeddings_np[idx], c_probs]).astype(np.float32)
+            else:
+                score = scores[i]
+                logit = logits[i]
+                c_probs = old_trajectory_cluster_probs[i] if old_trajectory_cluster_probs is not None else None
+            
+            # ASR TRACKING UPDATE
+            if old_trajectory_cluster_probs is not None:
+                prev_cluster_id = int(np.argmax(old_trajectory_cluster_probs[i]))
+                is_success = bool(score > self.success_threshold)
+                self.asr_tracker.append((prev_cluster_id, is_success))
+                try:
+                    self.venv.env_method("update_asr_tracker", prev_cluster_id, score, indices=i)
+                except Exception as e:
+                    logger.debug(f"Failed to call update_asr_tracker on worker {i}: {e}")
+            
+            # Extract worker-specific info for logging
+            self.current_worker = infos[i].get('worker_id', 'N/A')
+            self.current_seed = infos[i].get('seed', 'N/A')
+
+            # Update current_step for logging in reward_logic
+            self.current_step = self.total_steps
+            # Pass the environment index to the wrapper for worker tracking
+            self.current_env_idx = i
+            # Extract DSP parameters used in this worker's step
+            dsp_params = infos[i].get('dsp_params', None)
+            
+            # Compute reward and check for termination based on the CORRECT score and cluster
+            reward, terminated, bonus = compute_attack_reward(score, self, dsp_params=dsp_params, cluster_probs=c_probs, logit=logit)
+            
+            new_rewards.append(float(reward))
+            # SB3 VecEnv handles 'dones' (terminated or truncated)
+            # We add our own 'terminated' condition from the detector
+            is_done = dones[i] or terminated
+            new_dones.append(is_done)
+            
+            # If the episode ended (either in worker or here), ensure terminal_observation exists
+            if is_done and "terminal_observation" not in infos[i]:
+                infos[i]["terminal_observation"] = np.concatenate([embeddings_np[i], c_probs]).astype(np.float32)
+
+            # Update info dictionaries with actual detector results
+            infos[i]['score'] = float(score)
+            infos[i]['reward'] = float(reward)
+            infos[i]['bonus'] = bonus
+            infos[i]['terminated'] = terminated
+            if c_probs is not None:
+                infos[i]['cluster_id'] = int(np.argmax(c_probs))
+                
+            # Save raw and conditioned actions in info dict
+            if self.last_raw_actions is not None:
+                infos[i]['raw_action'] = self.last_raw_actions[i]
+            if self.last_conditioned_actions is not None:
+                infos[i]['conditioned_action'] = self.last_conditioned_actions[i]
+                
+        # Return conditioned embeddings of current observations [0:num_envs]
+        return new_cond_obs, np.array(new_rewards, dtype=np.float32), np.array(new_dones), infos
+
+
+class AdaptiveActionSpaceClipsWrapper(gym.Wrapper):
+    """
+    Gymnasium environment wrapper that dynamically compresses the action space
+    exploration boundaries of highly compromised acoustic clusters.
+    """
+    def __init__(self, env: gym.Env, config: dict):
+        super().__init__(env)
+        self.config = config or {}
+        self.success_threshold = getattr(env, "success_threshold", 0.50)
+        
+        # Load parameters from configuration
+        clustering_cfg = self.config.get("clustering", {})
+        self.asr_compression_threshold = float(clustering_cfg.get("asr_compression_threshold", 0.35))
+        self.max_compression_factor = float(clustering_cfg.get("max_compression_factor", 0.80))
+        self.compression_alpha = float(clustering_cfg.get("compression_alpha", 2.0))
+        self.n_clusters = int(clustering_cfg.get("n_components", 10))
+        
+        # Determine rolling window size from configuration
+        dn_cfg = clustering_cfg.get("dynamic_noise", {})
+        self.asr_window_size = int(dn_cfg.get("asr_update_window", 4096))
+        
+        # Thread-safe rolling window arrays
+        import threading
+        self._lock = threading.Lock()
+        self.asr_history = {c: np.zeros(self.asr_window_size, dtype=np.float32) for c in range(self.n_clusters)}
+        self.asr_counts = {c: 0 for c in range(self.n_clusters)}
+        self.asr_pointers = {c: 0 for c in range(self.n_clusters)}
+        
+        # Retrieve and cache cluster biases baseline
+        self.cluster_biases = clustering_cfg.get("cluster_biases", None)
+        if self.cluster_biases is not None:
+            self.cluster_biases = np.array(self.cluster_biases, dtype=np.float32)
+
+    def _get_current_cluster_id(self) -> int:
+        """Retrieves the GMM cluster ID of the current audio sample."""
+        probs = getattr(self.env, "current_trajectory_cluster_probs", None)
+        if probs is None:
+            probs = getattr(self, "current_trajectory_cluster_probs", None)
+            
+        if probs is not None:
+            return int(np.argmax(probs))
+            
+        cluster_id = getattr(self.env, "cluster_id", None)
+        if cluster_id is None:
+            cluster_id = getattr(self, "cluster_id", None)
+            
+        if cluster_id is not None:
+            return int(cluster_id)
+            
+        return 0
+
+    def update_asr_tracker(self, cluster_id: int, score: float):
+        """Updates the rolling window tracker for the specified cluster with a new step result."""
+        if cluster_id not in self.asr_history:
+            return
+        with self._lock:
+            is_success = 1.0 if score >= self.success_threshold else 0.0
+            pointer = self.asr_pointers[cluster_id]
+            self.asr_history[cluster_id][pointer] = is_success
+            self.asr_pointers[cluster_id] = (pointer + 1) % self.asr_window_size
+            self.asr_counts[cluster_id] = min(self.asr_counts[cluster_id] + 1, self.asr_window_size)
+
+    def get_asr(self, cluster_id: int) -> float:
+        """Computes the Attack Success Rate (ASR) for a cluster index."""
+        if cluster_id not in self.asr_history:
+            return 0.0
+        with self._lock:
+            count = self.asr_counts[cluster_id]
+            if count == 0:
+                return 0.0
+            return float(np.sum(self.asr_history[cluster_id][:count]) / count)
+
+    def step(self, action: np.ndarray):
+        """Intercepts action, applies contraction, and executes environment step."""
+        cluster_id = self._get_current_cluster_id()
+        exclude_clusters = self.config.get("clustering", {}).get("exclude_clusters", [])
+        
+        if cluster_id is not None and cluster_id not in exclude_clusters:
+            if self.cluster_biases is not None and cluster_id < len(self.cluster_biases):
+                b_c = self.cluster_biases[cluster_id]
+                
+                # Compute ASR
+                asr_c = self.get_asr(cluster_id)
+                
+                # Compute lambda_c
+                if asr_c <= self.asr_compression_threshold:
+                    lambda_c = 1.0
+                else:
+                    delta_c = (asr_c - self.asr_compression_threshold) / (1.0 - self.asr_compression_threshold)
+                    delta_c = np.clip(delta_c, 0.0, 1.0)
+                    lambda_c = 1.0 - (self.max_compression_factor * (delta_c ** self.compression_alpha))
+                
+                # Linearly interpolate action relative to baseline
+                action_compressed = b_c + lambda_c * (action - b_c)
+                
+                # Calculate dynamic bounds per cluster
+                min_allowed_action = b_c + lambda_c * (-1.0 - b_c)
+                max_action = b_c + lambda_c * (1.0 - b_c)
+                
+                # Log the dynamic boundary bounds per cluster
+                logger.info(
+                    "Cluster %d ASR: %.4f | Compression Scalar: %.4f | "
+                    "min_allowed_action: %s | max_action: %s",
+                    cluster_id, asr_c, lambda_c, str(min_allowed_action), str(max_action)
+                )
+                
+                obs, reward, terminated, truncated, info = self.env.step(action_compressed)
+                
+                # Add boundaries to info
+                info["min_allowed_action"] = min_allowed_action
+                info["max_action"] = max_action
+                info["compression_scalar"] = lambda_c
+                
+                if "score" in info:
+                    self.update_asr_tracker(cluster_id, info["score"])
+                    
+                return obs, reward, terminated, truncated, info
+                
+        # Excluded, fallback, or no cluster info available
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        if "score" in info and cluster_id is not None:
+            self.update_asr_tracker(cluster_id, info["score"])
+        return obs, reward, terminated, truncated, info

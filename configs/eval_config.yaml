@@ -1,0 +1,42 @@
+# Master Evaluation Configuration for KON-Artist
+# Adversarial Attacks against AASIST3
+
+# 1. Path Management
+paths:
+  weights_dir: "models/final_checkpoints/"
+  output_base_dir: "outputs/evaluation/"
+  raw_data_dir: "data/asvspoof_2019/test/wav/"
+  protocol_file: "data/asvspoof_2019/test/protocol.txt"
+  gmm_path: "models/gmm_registry.pkl"
+
+# 2. Model Registry (Used by the orchestrator loop)
+models:
+  base: 
+    filename: "kon_artist_base.zip"
+    sample_dir: "base_samples"
+  pik: 
+    filename: "kon_artist_pik.zip"
+    sample_dir: "pik_samples"
+  acp: 
+    filename: "kon_artist_acp.zip"
+    sample_dir: "acp_samples"
+    model_type: "acp" # Flag used to trigger cluster logic
+
+# 3. Time-Budget Guard
+time_control:
+  session_limit_hours: 4.0
+  safety_buffer_minutes: 15
+  # Estimated time per model evaluation (in seconds) used to predict if next step fits
+  estimated_duration_sec: 1800 
+
+# 4. Stratified Sub-population Analysis (For ACP Model)
+stratified_analysis:
+  cluster_count: 10
+  dominant_asr_threshold: 0.40  # Rows > 40% ASR
+  resilient_asr_threshold: 0.10 # Rows < 10% ASR
+
+# 5. Global Evaluation Settings
+settings:
+  device: "cuda"
+  num_eval_samples: 500
+  batch_size: 4
