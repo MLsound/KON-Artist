@@ -14,6 +14,7 @@ import torch
 import torchaudio
 import numpy as np
 from tqdm import tqdm
+from typing import Callable
 from stable_baselines3 import PPO
 from src.models.aasist import AASISTWrapper
 from src.env.audio_attack import AudioAttackEnv
@@ -25,6 +26,27 @@ import logging
 logger = get_logger(name=__file__,
                     log_file="outputs/logs/eval_session.log",
                     level=logging.INFO)
+
+class NumpyEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.generic):
+            return obj.item()
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, torch.Tensor):
+            if obj.numel() == 1:
+                return obj.item()
+            return obj.detach().cpu().numpy().tolist()
+        return super().default(obj)
+    
+def linear_schedule(initial_value: float) -> Callable[[float], float]:
+    """
+    Generates a linear schedule function compatible with the current Python runtime,
+    bypassing serialized CodeType mismatches.
+    """
+    def func(progress_remaining: float) -> float:
+        return progress_remaining * initial_value
+    return func
 
 def run_generation(model_path, num_samples=10, output_dir="outputs/attack_samples/", model_type="base"):
     """
@@ -41,9 +63,16 @@ def run_generation(model_path, num_samples=10, output_dir="outputs/attack_sample
     if not os.path.exists(model_path) and not os.path.exists(model_path + ".zip"):
         logger.error(f"Trained model not found at {model_path}")
         return
+    
+    # Create the override dictionary
+    override_objects = {
+        "lr_schedule": linear_schedule(0.0003),
+        "clip_range": linear_schedule(0.2)
+    }
 
     logger.info(f"Loading RL agent from {model_path}...")
-    agent = PPO.load(model_path, device=device)
+    # agent = PPO.load(model_path, device=device) # Original line, causes CodeType mismatch due to custom_objects
+    agent = PPO.load(model_path, custom_objects=override_objects, device=device)
 
     # 3. Load Data Loader (Spoof samples only)
     logger.info("Loading ASVspoof 2019 validation split for generation...")
@@ -144,13 +173,13 @@ def run_generation(model_path, num_samples=10, output_dir="outputs/attack_sample
             })
 
     # 7. Save Metadata and Successful Configurations
-    metadata_path = os.path.join(output_dir, "generation_metadata.json")
-    with open(metadata_path, "w") as f:
-        json.dump(metadata, f, indent=4)
+        metadata_path = os.path.join(output_dir, "generation_metadata.json")
+        with open(metadata_path, "w") as f:
+            json.dump(metadata, f, cls=NumpyEncoder, indent=4)
 
-    success_configs_path = os.path.join(output_dir, "successful_attack_configs.json")
-    with open(success_configs_path, "w") as f:
-        json.dump(successful_attack_configs, f, indent=4)
+        success_configs_path = os.path.join(output_dir, "successful_attack_configs.json")
+        with open(success_configs_path, "w") as f:
+            json.dump(successful_attack_configs, f, cls=NumpyEncoder, indent=4)
 
     # Save cluster map if running ACP
     if model_type == "acp" and cluster_mappings:
@@ -174,8 +203,8 @@ if __name__ == "__main__":
                         help="Number of samples to generate.")
     parser.add_argument("--out", type=str, default="outputs/attack_samples/", 
                         help="Directory to save generated samples.")
-    parser.add_argument("--model_type", type=str, default="base", choices=["base", "pik", "acp"],
-                        help="The architecture model type (base, pik, acp).")
+    parser.add_argument("--model_type", type=str, default="base", choices=["base", "pki", "acp"],
+                        help="The architecture model type (base, pki, acp).")
     
     args = parser.parse_args()
     run_generation(args.model, args.samples, args.out, args.model_type)
