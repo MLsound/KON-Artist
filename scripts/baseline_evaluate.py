@@ -131,7 +131,7 @@ if __name__ == "__main__":
                         help="Directory containing .wav files.")
     parser.add_argument("--protocol", type=str, required=True, 
                         help="Path to the protocol/label file.")
-    parser.add_argument("--save-scores", type=str, default="outputs/baseline_scores.txt", 
+    parser.add_argument("--save-scores", type=str, default="outputs/baseline/baseline_scores.txt", 
                         help="Path to save individual inference scores.")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else ("mps" if torch.backends.mps.is_available() else "cpu"))
 

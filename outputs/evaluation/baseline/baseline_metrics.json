@@ -1,0 +1,6 @@
+{
+    "eer": 0.002,
+    "min_tdcf": 0.004,
+    "bonafide_samples": 250,
+    "spoof_samples": 250
+}

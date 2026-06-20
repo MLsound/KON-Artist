@@ -1,0 +1,6 @@
+cluster_id,total_samples,successful_attacks,mean_final_score,asr,eer,manifold_type
+1,64,0,0.001290625,0.0,1.5812500000000007,Resilient (Robust)
+2,1,0,0.0001,0.0,0.0,Resilient (Robust)
+5,334,0,0.002158383233532934,0.0,3.0970059880239535,Resilient (Robust)
+6,5,0,0.0,0.0,1.200000000000001,Resilient (Robust)
+7,139,0,0.0017712230215827338,0.0,0.7597122302158277,Resilient (Robust)

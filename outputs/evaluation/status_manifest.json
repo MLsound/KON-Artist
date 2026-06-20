@@ -1,0 +1,15 @@
+{
+    "baseline_evaluated": true,
+    "generation_completed": {
+        "base": true,
+        "pki": true,
+        "acp": true
+    },
+    "scoring_completed": {
+        "base": true,
+        "pki": true,
+        "acp": true
+    },
+    "visuals_completed": true,
+    "task_durations": []
+}

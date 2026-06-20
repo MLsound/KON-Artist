@@ -13,13 +13,13 @@ paths:
 models:
   base: 
     filename: "kon_artist_base.zip"
-    sample_dir: "base_samples"
-  pik: 
-    filename: "kon_artist_pik.zip"
-    sample_dir: "pik_samples"
+    sample_dir: "best_base_model/samples"
+  pki: 
+    filename: "kon_artist_pki.zip"
+    sample_dir: "best_pki_model/samples"
   acp: 
     filename: "kon_artist_acp.zip"
-    sample_dir: "acp_samples"
+    sample_dir: "best_acp_model/samples"
     model_type: "acp" # Flag used to trigger cluster logic
 
 # 3. Time-Budget Guard
@@ -37,6 +37,6 @@ stratified_analysis:
 
 # 5. Global Evaluation Settings
 settings:
-  device: "cuda"
+  device: "cpu"
   num_eval_samples: 500
   batch_size: 4

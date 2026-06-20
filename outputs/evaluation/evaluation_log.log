@@ -1,0 +1,124 @@
+2026-06-19 00:24:49,233 [INFO] Master benchmark evaluation session initialized at: 2026-06-19 00:24:49
+2026-06-19 00:24:49,237 [INFO] Initialized new status manifest.
+2026-06-19 00:24:49,291 [INFO] TimeBudgetManager initialized. Active device: cpu
+2026-06-19 00:24:50,387 [INFO] PyTorch version 2.2.2 available.
+2026-06-19 00:24:54,557 [INFO] Downloading/streaming ASVspoof 2019 validation samples...
+2026-06-19 00:28:02,608 [WARNING] '(ProtocolError('Connection aborted.', RemoteDisconnected('Remote end closed connection without response')), '(Request ID: e1f9963b-306c-4997-98bd-479f4cfb2c60)')' thrown while requesting GET https://huggingface.co/datasets/Bisher/ASVspoof_2019_LA/resolve/aea92dd83a9c56e070c0b1e9f02e7c0d96216a4c/data/validation-00000-of-00001.parquet
+2026-06-19 00:28:02,696 [WARNING] Retrying in 1s [Retry 1/5].
+2026-06-19 00:28:47,179 [INFO] Control baseline dataset compiled: 250 bonafide & 250 spoof samples saved.
+2026-06-19 00:28:47,180 [INFO] Evaluating baseline detector performance...
+2026-06-19 00:45:14,880 [INFO] Recorded task duration: 987.70s.
+2026-06-19 00:45:14,888 [INFO] Baseline Evaluation Finished. EER: 0.2000%, min t-DCF: 0.0040
+2026-06-19 00:45:16,115 [INFO] Running adversarial sample generation for base...
+2026-06-19 00:45:58,098 [WARNING] '(ReadTimeoutError("HTTPSConnectionPool(host='us.aws.cdn.hf.co', port=443): Read timed out. (read timeout=10)"), '(Request ID: 89a48067-13c4-4ffc-8059-6b4bc42f21e9)')' thrown while requesting GET https://huggingface.co/datasets/Bisher/ASVspoof_2019_LA/resolve/aea92dd83a9c56e070c0b1e9f02e7c0d96216a4c/data/validation-00000-of-00001.parquet
+2026-06-19 00:45:58,101 [WARNING] Retrying in 1s [Retry 1/5].
+2026-06-19 09:21:56,664 [INFO] Adversarial samples for base already exist in manifest. Skipping generation.
+2026-06-19 09:21:56,709 [INFO] Running adversarial sample generation for pki...
+2026-06-19 09:22:52,569 [WARNING] '(ReadTimeoutError("HTTPSConnectionPool(host='us.aws.cdn.hf.co', port=443): Read timed out. (read timeout=10)"), '(Request ID: bd8f5f2f-784e-4d28-9766-57278f7bb3fa)')' thrown while requesting GET https://huggingface.co/datasets/Bisher/ASVspoof_2019_LA/resolve/aea92dd83a9c56e070c0b1e9f02e7c0d96216a4c/data/validation-00000-of-00001.parquet
+2026-06-19 09:22:52,820 [WARNING] Retrying in 1s [Retry 1/5].
+2026-06-19 09:23:23,365 [WARNING] '(ReadTimeoutError("HTTPSConnectionPool(host='us.aws.cdn.hf.co', port=443): Read timed out. (read timeout=10)"), '(Request ID: f71816a8-b966-492a-b832-47d13f5cb7d3)')' thrown while requesting GET https://huggingface.co/datasets/Bisher/ASVspoof_2019_LA/resolve/aea92dd83a9c56e070c0b1e9f02e7c0d96216a4c/data/validation-00000-of-00001.parquet
+2026-06-19 09:23:23,384 [WARNING] Retrying in 1s [Retry 1/5].
+2026-06-19 09:23:40,157 [WARNING] '(ReadTimeoutError("HTTPSConnectionPool(host='us.aws.cdn.hf.co', port=443): Read timed out. (read timeout=10)"), '(Request ID: aa7f9790-118a-480d-b12c-aa6810b156c1)')' thrown while requesting GET https://huggingface.co/datasets/Bisher/ASVspoof_2019_LA/resolve/aea92dd83a9c56e070c0b1e9f02e7c0d96216a4c/data/validation-00000-of-00001.parquet
+2026-06-19 09:23:40,173 [WARNING] Retrying in 1s [Retry 1/5].
+2026-06-19 10:02:24,142 [WARNING] '(ReadTimeoutError("HTTPSConnectionPool(host='us.aws.cdn.hf.co', port=443): Read timed out. (read timeout=10)"), '(Request ID: a959d435-e073-47e9-8b98-dd3c1b04711d)')' thrown while requesting GET https://huggingface.co/datasets/Bisher/ASVspoof_2019_LA/resolve/aea92dd83a9c56e070c0b1e9f02e7c0d96216a4c/data/validation-00000-of-00001.parquet
+2026-06-19 10:02:24,165 [WARNING] Retrying in 1s [Retry 1/5].
+2026-06-19 11:46:53,683 [INFO] Adversarial samples for base already exist in manifest. Skipping generation.
+2026-06-19 11:46:53,707 [INFO] Adversarial samples for pki already exist in manifest. Skipping generation.
+2026-06-19 11:46:53,715 [INFO] Running adversarial sample generation for acp...
+2026-06-19 13:47:41,676 [INFO] Compiling evaluation dataset for scoring base...
+2026-06-19 13:47:43,185 [INFO] Scoring AASIST3 detector robustness on base adversarial samples...
+2026-06-19 14:10:23,269 [INFO] Compiling evaluation dataset for scoring base...
+2026-06-19 14:10:24,352 [INFO] Scoring AASIST3 detector robustness on base adversarial samples...
+2026-06-19 14:30:39,939 [INFO] Recorded task duration: 1216.64s.
+2026-06-19 14:30:39,949 [INFO] base Scoring complete: EER: 0.0000%, ASR: 100.00%
+2026-06-19 14:30:39,953 [INFO] Compiling evaluation dataset for scoring pki...
+2026-06-19 14:30:40,672 [INFO] Scoring AASIST3 detector robustness on pki adversarial samples...
+2026-06-19 14:48:54,770 [INFO] Recorded task duration: 1094.81s.
+2026-06-19 14:48:54,774 [INFO] pki Scoring complete: EER: 8.2000%, ASR: 100.00%
+2026-06-19 14:48:54,775 [INFO] Compiling evaluation dataset for scoring acp...
+2026-06-19 14:48:55,695 [INFO] Scoring AASIST3 detector robustness on acp adversarial samples...
+2026-06-19 15:07:29,126 [INFO] Recorded task duration: 1114.35s.
+2026-06-19 15:07:29,135 [INFO] acp Scoring complete: EER: 2.4000%, ASR: 100.00%
+2026-06-19 15:07:29,138 [INFO] Conducting stratified acoustic manifold analysis for ACP...
+2026-06-19 15:07:29,147 [WARNING] Failed to run stratified analysis: Missing CSV or score files.
+2026-06-19 15:29:12,751 [INFO] Conducting stratified acoustic manifold analysis for ACP...
+2026-06-19 15:29:13,144 [INFO] Stratified analysis results written.
+2026-06-19 17:07:14,592 [INFO] Conducting stratified acoustic manifold analysis for ACP...
+2026-06-19 17:07:14,711 [INFO] Stratified analysis results written.
+2026-06-19 19:44:41,813 [INFO] Adversarial samples for base already exist in manifest. Skipping generation.
+2026-06-19 19:44:41,836 [INFO] Adversarial samples for pki already exist in manifest. Skipping generation.
+2026-06-19 19:44:41,841 [INFO] Adversarial samples for acp already exist in manifest. Skipping generation.
+2026-06-19 19:45:44,172 [INFO] Adversarial samples for base already exist in manifest. Skipping generation.
+2026-06-19 19:45:44,176 [INFO] Adversarial samples for pki already exist in manifest. Skipping generation.
+2026-06-19 19:45:44,188 [INFO] Adversarial samples for acp already exist in manifest. Skipping generation.
+2026-06-19 19:46:23,044 [INFO] Adversarial samples for base already exist in manifest. Skipping generation.
+2026-06-19 19:46:23,048 [INFO] Adversarial samples for pki already exist in manifest. Skipping generation.
+2026-06-19 19:46:23,050 [INFO] Adversarial samples for acp already exist in manifest. Skipping generation.
+2026-06-19 19:47:01,150 [INFO] Loaded existing status manifest: {
+  "baseline_evaluated": true,
+  "generation_completed": {
+    "base": true,
+    "pki": true,
+    "acp": false
+  },
+  "scoring_completed": {
+    "base": true,
+    "pki": true,
+    "acp": false
+  },
+  "visuals_completed": true,
+  "task_durations": []
+}
+2026-06-19 19:47:17,047 [INFO] Adversarial samples for base already exist in manifest. Skipping generation.
+2026-06-19 19:47:17,055 [INFO] Adversarial samples for pki already exist in manifest. Skipping generation.
+2026-06-19 19:47:17,066 [INFO] Running adversarial sample generation for acp...
+2026-06-19 19:47:43,731 [WARNING] '(ReadTimeoutError("HTTPSConnectionPool(host='us.aws.cdn.hf.co', port=443): Read timed out. (read timeout=10)"), '(Request ID: 47d8e873-ca59-4153-bfbd-0c0f056f5fba)')' thrown while requesting GET https://huggingface.co/datasets/Bisher/ASVspoof_2019_LA/resolve/aea92dd83a9c56e070c0b1e9f02e7c0d96216a4c/data/validation-00000-of-00001.parquet
+2026-06-19 19:47:43,737 [WARNING] Retrying in 1s [Retry 1/5].
+2026-06-19 21:55:36,300 [INFO] base scoring metrics already computed. Loading cached data...
+2026-06-19 21:55:36,312 [INFO] pki scoring metrics already computed. Loading cached data...
+2026-06-19 21:55:36,315 [INFO] Compiling evaluation dataset for scoring acp...
+2026-06-19 21:55:38,219 [INFO] Scoring AASIST3 detector robustness on acp adversarial samples...
+2026-06-19 22:20:42,954 [INFO] Recorded task duration: 1506.62s.
+2026-06-19 22:20:42,960 [INFO] acp Scoring complete: EER: 2.4315%, ASR: 100.00%
+2026-06-19 22:20:42,962 [INFO] Conducting stratified acoustic manifold analysis for ACP...
+2026-06-19 22:20:42,965 [WARNING] Failed to run stratified analysis: Missing CSV or score files.
+2026-06-19 23:00:29,187 [ERROR] Acoustic cluster summary file missing. Final visual reporting skipped.
+2026-06-19 23:01:25,417 [ERROR] Acoustic cluster summary file missing. Final visual reporting skipped.
+2026-06-19 23:02:04,850 [ERROR] Acoustic cluster summary file missing. Final visual reporting skipped.
+2026-06-19 23:06:37,050 [INFO] Adversarial samples for base already exist in manifest. Skipping generation.
+2026-06-19 23:06:37,058 [INFO] Adversarial samples for pki already exist in manifest. Skipping generation.
+2026-06-19 23:06:37,064 [INFO] Running adversarial sample generation for acp...
+2026-06-19 23:10:06,866 [WARNING] '(ReadTimeoutError("HTTPSConnectionPool(host='us.aws.cdn.hf.co', port=443): Read timed out. (read timeout=10)"), '(Request ID: c763eab3-a190-4ec3-8e2e-faf4ee88f030)')' thrown while requesting GET https://huggingface.co/datasets/Bisher/ASVspoof_2019_LA/resolve/aea92dd83a9c56e070c0b1e9f02e7c0d96216a4c/data/validation-00000-of-00001.parquet
+2026-06-19 23:10:06,921 [WARNING] Retrying in 1s [Retry 1/5].
+2026-06-19 23:48:50,903 [WARNING] '(ReadTimeoutError("HTTPSConnectionPool(host='us.aws.cdn.hf.co', port=443): Read timed out. (read timeout=10)"), '(Request ID: fa4a5a9f-293b-4dcc-b987-fecbb9612010)')' thrown while requesting GET https://huggingface.co/datasets/Bisher/ASVspoof_2019_LA/resolve/aea92dd83a9c56e070c0b1e9f02e7c0d96216a4c/data/validation-00000-of-00001.parquet
+2026-06-19 23:48:50,936 [WARNING] Retrying in 1s [Retry 1/5].
+2026-06-20 00:54:59,254 [INFO] base scoring metrics already computed. Loading cached data...
+2026-06-20 00:54:59,257 [INFO] pki scoring metrics already computed. Loading cached data...
+2026-06-20 00:54:59,259 [INFO] Compiling evaluation dataset for scoring acp...
+2026-06-20 00:55:01,028 [INFO] Scoring AASIST3 detector robustness on acp adversarial samples...
+2026-06-20 01:21:27,082 [INFO] Recorded task duration: 1587.81s.
+2026-06-20 01:21:27,093 [INFO] acp Scoring complete: EER: 2.4891%, ASR: 100.00%
+2026-06-20 01:21:27,095 [INFO] Conducting stratified acoustic manifold analysis for ACP...
+2026-06-20 01:21:27,097 [WARNING] Failed to run stratified analysis: Missing CSV or score files.
+2026-06-20 09:41:10,912 [ERROR] Acoustic cluster summary file missing. Final visual reporting skipped.
+2026-06-20 10:04:44,587 [INFO] base scoring metrics already computed. Loading cached data...
+2026-06-20 10:04:44,597 [INFO] pki scoring metrics already computed. Loading cached data...
+2026-06-20 10:04:44,601 [INFO] acp scoring metrics already computed. Loading cached data...
+2026-06-20 10:04:44,603 [INFO] Conducting stratified acoustic manifold analysis for ACP...
+2026-06-20 10:04:45,242 [INFO] Stratified analysis results written.
+2026-06-20 11:22:23,827 [WARNING] '(ReadTimeoutError("HTTPSConnectionPool(host='us.aws.cdn.hf.co', port=443): Read timed out. (read timeout=10)"), '(Request ID: 7712ef35-1477-4e8b-af23-9a092d70f10b)')' thrown while requesting GET https://huggingface.co/datasets/Bisher/ASVspoof_2019_LA/resolve/aea92dd83a9c56e070c0b1e9f02e7c0d96216a4c/data/train-00000-of-00001.parquet
+2026-06-20 11:22:23,837 [WARNING] Retrying in 1s [Retry 1/5].
+2026-06-20 11:23:02,051 [WARNING] '(ReadTimeoutError("HTTPSConnectionPool(host='us.aws.cdn.hf.co', port=443): Read timed out. (read timeout=10)"), '(Request ID: 4df4e6e9-6950-4c01-b0bf-d6d6f4235b25)')' thrown while requesting GET https://huggingface.co/datasets/Bisher/ASVspoof_2019_LA/resolve/aea92dd83a9c56e070c0b1e9f02e7c0d96216a4c/data/train-00000-of-00001.parquet
+2026-06-20 11:23:02,061 [WARNING] Retrying in 1s [Retry 1/5].
+2026-06-20 11:24:24,798 [WARNING] '(ReadTimeoutError("HTTPSConnectionPool(host='us.aws.cdn.hf.co', port=443): Read timed out. (read timeout=10)"), '(Request ID: e66426c7-daaa-4831-843f-787bf7342863)')' thrown while requesting GET https://huggingface.co/datasets/Bisher/ASVspoof_2019_LA/resolve/aea92dd83a9c56e070c0b1e9f02e7c0d96216a4c/data/train-00000-of-00001.parquet
+2026-06-20 11:24:24,812 [WARNING] Retrying in 1s [Retry 1/5].
+2026-06-20 11:25:07,736 [WARNING] '(ReadTimeoutError("HTTPSConnectionPool(host='us.aws.cdn.hf.co', port=443): Read timed out. (read timeout=10)"), '(Request ID: 2062f7ff-2cc2-4fbc-8b54-157913e0c5cf)')' thrown while requesting GET https://huggingface.co/datasets/Bisher/ASVspoof_2019_LA/resolve/aea92dd83a9c56e070c0b1e9f02e7c0d96216a4c/data/train-00000-of-00001.parquet
+2026-06-20 11:25:07,739 [WARNING] Retrying in 1s [Retry 1/5].
+2026-06-20 12:03:32,097 [WARNING] '(ReadTimeoutError("HTTPSConnectionPool(host='us.aws.cdn.hf.co', port=443): Read timed out. (read timeout=10)"), '(Request ID: b9ed61a9-a157-49bf-b2f3-0b5688fd158e)')' thrown while requesting GET https://huggingface.co/datasets/Bisher/ASVspoof_2019_LA/resolve/aea92dd83a9c56e070c0b1e9f02e7c0d96216a4c/data/train-00000-of-00001.parquet
+2026-06-20 12:03:32,132 [WARNING] Retrying in 1s [Retry 1/5].
+2026-06-20 13:34:03,279 [WARNING] '(ReadTimeoutError("HTTPSConnectionPool(host='us.aws.cdn.hf.co', port=443): Read timed out. (read timeout=10)"), '(Request ID: 088aed68-d19d-486c-9223-7be46a175925)')' thrown while requesting GET https://huggingface.co/datasets/Bisher/ASVspoof_2019_LA/resolve/aea92dd83a9c56e070c0b1e9f02e7c0d96216a4c/data/train-00000-of-00001.parquet
+2026-06-20 13:34:03,309 [WARNING] Retrying in 1s [Retry 1/5].
+2026-06-20 13:50:38,140 [WARNING] '(ReadTimeoutError("HTTPSConnectionPool(host='us.aws.cdn.hf.co', port=443): Read timed out. (read timeout=10)"), '(Request ID: 3e69af96-5bc7-46e5-9083-aecbc81c31d3)')' thrown while requesting GET https://huggingface.co/datasets/Bisher/ASVspoof_2019_LA/resolve/aea92dd83a9c56e070c0b1e9f02e7c0d96216a4c/data/train-00000-of-00001.parquet
+2026-06-20 13:50:38,173 [WARNING] Retrying in 1s [Retry 1/5].
+2026-06-20 15:30:38,253 [WARNING] '(ReadTimeoutError("HTTPSConnectionPool(host='us.aws.cdn.hf.co', port=443): Read timed out. (read timeout=10)"), '(Request ID: 72fd8d3b-9a36-4673-8c45-57b045b32b55)')' thrown while requesting GET https://huggingface.co/datasets/Bisher/ASVspoof_2019_LA/resolve/aea92dd83a9c56e070c0b1e9f02e7c0d96216a4c/data/train-00000-of-00001.parquet
+2026-06-20 15:30:38,258 [WARNING] Retrying in 1s [Retry 1/5].
