@@ -9,3 +9,5 @@ docs/papers
 /wandb
 /weights
 /outputs/weights
+/outputs/evaluation/best_*_model/samples
+/outputs/evaluation/*_eval_wav
