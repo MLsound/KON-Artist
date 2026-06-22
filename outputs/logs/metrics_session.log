@@ -36,3 +36,27 @@
 [2026-04-25 16:35:45] INFO [generate_plots:31] Reading data from outputs/rewards_20260425_142549.csv...
 [2026-04-25 16:35:45] INFO [generate_plots:35] Generating plot for training session: 20260425_142549
 [2026-04-25 16:35:46] INFO [generate_plots:74] Plot saved successfully at: outputs/convergence_20260425_142549.png
+[2026-06-18 18:27:53] INFO [generate_plots:34] Reading data from outputs/history/rewards_merged.csv...
+[2026-06-18 18:27:53] INFO [generate_plots:38] Generating plot for training session: merged
+[2026-06-18 18:27:57] INFO [generate_plots:108] Plot saved successfully at: outputs/convergence_merged.png
+[2026-06-18 18:28:52] ERROR [generate_plots:31] Data file not found at: rewards_merged.csv
+[2026-06-18 18:29:06] ERROR [generate_plots:31] Data file not found at: outputs/rewards_merged.csv
+[2026-06-18 18:29:30] INFO [generate_plots:34] Reading data from outputs/rewards_merged.csv...
+[2026-06-18 18:29:30] INFO [generate_plots:38] Generating plot for training session: merged
+[2026-06-18 18:29:34] INFO [generate_plots:108] Plot saved successfully at: outputs/convergence_merged.png
+[2026-06-18 18:42:18] INFO [generate_plots:34] Reading data from outputs/rewards_history.csv...
+[2026-06-18 18:42:18] INFO [generate_plots:38] Generating plot for training session: history
+[2026-06-18 18:42:20] INFO [generate_plots:74] Y-axis limited to: (0, 100)
+[2026-06-18 18:42:27] INFO [generate_plots:108] Plot saved successfully at: outputs/convergence_history.png
+[2026-06-18 18:44:30] INFO [generate_plots:34] Reading data from outputs/rewards_history.csv...
+[2026-06-18 18:44:30] INFO [generate_plots:38] Generating plot for training session: history
+[2026-06-18 18:44:33] INFO [generate_plots:74] Y-axis limited to: (0, 100)
+[2026-06-18 18:44:41] INFO [generate_plots:108] Plot saved successfully at: outputs/convergence_history.png
+[2026-06-18 18:46:23] INFO [generate_plots:34] Reading data from outputs/rewards_history.csv...
+[2026-06-18 18:46:23] INFO [generate_plots:38] Generating plot for training session: history
+[2026-06-18 18:46:25] INFO [generate_plots:74] Y-axis limited to: (0, 100)
+[2026-06-18 18:46:32] INFO [generate_plots:108] Plot saved successfully at: outputs/convergence_history.png
+[2026-06-18 18:48:25] INFO [generate_plots:34] Reading data from outputs/rewards_history.csv...
+[2026-06-18 18:48:25] INFO [generate_plots:38] Generating plot for training session: history
+[2026-06-18 18:48:27] INFO [generate_plots:74] Y-axis limited to: (0, 100)
+[2026-06-18 18:48:33] INFO [generate_plots:108] Plot saved successfully at: outputs/convergence_history.png

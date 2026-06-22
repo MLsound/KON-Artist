@@ -1,0 +1,2 @@
+cluster,count,score,bonus,reward,dsp_jitter,dsp_shimmer,dsp_tilt,dsp_harmonics,dsp_threshold,dsp_ratio,dsp_bitrate
+5,5,0.6279702663421631,47.09776997566223,157.24472750156195,-0.6,-0.6824618339999999,-0.620272684,-0.19873005400000002,-31.1425142288208,1.0,144046.2
