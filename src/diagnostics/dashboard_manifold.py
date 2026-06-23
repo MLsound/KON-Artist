@@ -1,9 +1,9 @@
 """
-Global Continuous 3D Manifold Surface and Scatter Web Dashboard.
+Streamlit Web Dashboard for Interactive AASIST3 Adversarial Failure Manifold Mapping.
 
-This script implements a reactive web dashboard using Streamlit and Plotly
-to visualize global feature interactions and vulnerability boundaries
-without partitioning data into separate acoustic clusters.
+This script implements a reactive web dashboard allowing dynamic swapping of runs,
+dimension mapping to X, Y, Z axes, custom colorscales, dynamic sizes, and
+on-the-fly mesh surface interpolation.
 
 Usage: 
     streamlit run src/diagnostics/dashboard_manifold.py
@@ -191,26 +191,36 @@ def load_data(winners_path, analysis_path):
     Loads winners and analysis CSV files, wrapping with caching.
     """
     winners_df = pd.read_csv(winners_path)
+    # Ensure cluster column is integer type
+    if "cluster" in winners_df.columns:
+        winners_df["cluster"] = winners_df["cluster"].astype(int)
+
     analysis_df = None
     if analysis_path and os.path.exists(analysis_path):
         analysis_df = pd.read_csv(analysis_path)
+
     return winners_df, analysis_df
 
 
-def interpolate_global_surface(df, x_col, y_col, z_col, grid_size=50):
+def interpolate_surface(df_cluster, x_col, y_col, z_col, grid_size=50):
     """
-    Computes 2D mesh grid and interpolates Z values over the entire dataset.
+    Computes 2D mesh grid and interpolates Z values using Rbf or linear fallback.
     """
     # Group coordinates and take the mean to resolve duplicates
-    agg_df = df.groupby([x_col, y_col])[z_col].mean().reset_index()
+    working_data = df_cluster[[x_col, y_col, z_col]].copy()
+    if x_col == z_col or y_col == z_col:
+        working_data = working_data.loc[:, ~working_data.columns.duplicated()].copy()
+        agg_df = working_data.groupby([x_col, y_col], as_index=False).mean()
+    else:
+        agg_df = working_data.groupby([x_col, y_col], as_index=False)[z_col].mean()
 
     x = agg_df[x_col].values
     y = agg_df[y_col].values
     z = agg_df[z_col].values
 
-    x_min, x_max = df[x_col].min(), df[x_col].max()
-    y_min, y_max = df[y_col].min(), df[y_col].max()
-    z_min, z_max = df[z_col].min(), df[z_col].max()
+    x_min, x_max = df_cluster[x_col].min(), df_cluster[x_col].max()
+    y_min, y_max = df_cluster[y_col].min(), df_cluster[y_col].max()
+    z_min, z_max = df_cluster[z_col].min(), df_cluster[z_col].max()
 
     if x_max == x_min or y_max == y_min:
         return None, None, None
@@ -220,6 +230,7 @@ def interpolate_global_surface(df, x_col, y_col, z_col, grid_size=50):
     gx, gy = np.meshgrid(grid_x, grid_y)
 
     if len(x) < 4:
+        # Fallback to linear interpolation immediately if not enough points for thin-plate splines
         try:
             gz = griddata((x, y), z, (gx, gy), method="linear")
             gz = np.clip(gz, z_min, z_max)
@@ -228,7 +239,7 @@ def interpolate_global_surface(df, x_col, y_col, z_col, grid_size=50):
             return None, None, None
 
     try:
-        rbf = Rbf(x, y, z, function="thin_plate", smooth=0.15)
+        rbf = Rbf(x, y, z, function="thin_plate", smooth=0.1)
         gz = rbf(gx, gy)
         gz = np.clip(gz, z_min, z_max)
         return gx, gy, gz
@@ -241,17 +252,31 @@ def interpolate_global_surface(df, x_col, y_col, z_col, grid_size=50):
             return None, None, None
 
 
+def compute_marker_sizes(df, col_name, default_size=6, min_size=3, max_size=15):
+    """
+    Dynamically maps a feature column to marker size dimensions using min-max scaling.
+    """
+    if col_name == "Uniform":
+        return default_size
+
+    vals = df[col_name].values
+    if len(vals) == 0:
+        return default_size
+
+    v_min, v_max = vals.min(), vals.max()
+    if v_max == v_min:
+        return default_size
+
+    # Linearly scale values to range [min_size, max_size]
+    scaled = min_size + (vals - v_min) / (v_max - v_min) * (max_size - min_size)
+    return scaled
+
+
 def main():
+    st.set_page_config(layout="wide")
     apply_academic_styling()
 
-    # Dashboard Header (Serif typography, clean lines)
-    st.title("MTUCI/AASIST3 Global Adversarial Failure Manifold Dashboard")
-    st.write(
-        "Interactive web application visualizing global macro-vulnerabilities and decision "
-        "boundaries across all acoustic profiles as a single unified manifold."
-    )
-
-    # 1. Global Workspace Data Scanner Sidebar
+    # 1. Dynamic File Scanning Sidebar
     st.sidebar.header("Data Ingestion Control Panel")
     all_files = scan_winners_files()
 
@@ -272,6 +297,31 @@ def main():
         )
         selected_winners_path = file_options[selected_file_name]
 
+    # Session ID Extraction Layer
+    match_sid = re.search(r"(?P<id>\d{8}_\d{6})", os.path.basename(selected_winners_path))
+    active_session_id = match_sid.group("id") if match_sid else "unknown"
+    st.session_state["active_session_id"] = active_session_id
+
+    # Dashboard Header (Serif typography, clean lines)
+    st.title("MTUCI/AASIST3 Adversarial Failure Manifold Dashboard")
+    st.write(
+        "Interactive thesis diagnostics tool for analyzing mathematical decision surfaces "
+        "and acoustic cluster boundaries."
+    )
+
+    # Hyperparameter Log Parsing & Metric Render Block
+    params = get_hyperparameters(st.session_state.get("active_session_id"))
+    if params:
+        st.info(
+            f"Configuration Profile: TOTAL_TIMESTEPS = {params['TOTAL_TIMESTEPS']} | "
+            f"N_STEPS = {params['N_STEPS']} | "
+            f"TOTAL_UPDATES = {params['TOTAL_UPDATES']} | "
+            f"EPOCHS = {params['EPOCHS']} | "
+            f"BATCH = {params['BATCH']}"
+        )
+    else:
+        st.warning("Session log parameters unavailable")
+
     # Automatically locate paired analysis file
     selected_analysis_path = locate_paired_analysis_file(selected_winners_path)
 
@@ -284,22 +334,29 @@ def main():
         st.error(f"Error loading CSV files: {e}")
         return
 
-    # Extract timestamp for layout naming
-    session_id = extract_timestamp(selected_winners_path) or "unknown"
+    # Defensive validation hook
+    if "cluster" not in winners_df.columns:
+        winners_df.columns = [col.lower().strip() for col in winners_df.columns]
+
+    if "cluster" not in winners_df.columns:
+        st.error("Required column 'cluster' could not be found in the dataset.")
+        st.stop()
+
+    winners_df["cluster"] = winners_df["cluster"].astype(int)
 
     # Display dataset dimensions information
     st.sidebar.info(
-        f"Active Session: {session_id}\n"
+        f"Active Session: {active_session_id}\n"
         f"Total trajectory samples: {len(winners_df)}"
     )
 
-    # Filter incoming rows to retain only valid model-bypass vectors (score >= 0.50)
+    # Clean filtering: Retain successful attack vectors (score >= 0.50)
     filtered_df = winners_df[winners_df["score"] >= 0.50].copy()
 
-    # 2. Unified Feature Selection Menu
-    st.sidebar.header("Global Feature Mappings")
+    # 2. Dynamic Feature Selection
+    st.sidebar.header("Coordinate Feature Mappings")
 
-    # Isolate all columns starting with dsp_ prefix
+    # Isolate all columns prefixing with dsp_
     dsp_cols = sorted([col for col in filtered_df.columns if col.startswith("dsp_")])
 
     if not dsp_cols:
@@ -309,7 +366,7 @@ def main():
     # Select X-Axis
     default_x_idx = dsp_cols.index("dsp_tilt") if "dsp_tilt" in dsp_cols else 0
     x_axis_col = st.sidebar.selectbox(
-        "X-Axis Feature Mapping:", dsp_cols, index=default_x_idx
+        "X-Axis Feature (Spectral Tilt):", dsp_cols, index=default_x_idx
     )
 
     # Select Y-Axis
@@ -317,118 +374,148 @@ def main():
         dsp_cols.index("dsp_harmonics") if "dsp_harmonics" in dsp_cols else 0
     )
     y_axis_col = st.sidebar.selectbox(
-        "Y-Axis Feature Mapping:", dsp_cols, index=default_y_idx
+        "Y-Axis Feature (Harmonic Coefficients):", dsp_cols, index=default_y_idx
     )
 
-    # Configurable Z-Axis response between score and reward
+    # Configurable Z-Axis between score and reward
     z_axis_col = st.sidebar.selectbox(
-        "Z-Axis Response Metric:", ["score", "reward"], index=0
+        "Z-Axis Performance Metric:", ["score", "reward"], index=0
     )
 
     # Color Scale Selector (score, reward, or any dsp_ metric)
     color_options = ["score", "reward"] + dsp_cols
     default_color_idx = color_options.index("score")
     color_col = st.sidebar.selectbox(
-        "Color-Scale Variable Mapping:", color_options, index=default_color_idx
+        "Color-Scale Metric (Magnitude Mapping):",
+        color_options,
+        index=default_color_idx,
     )
 
-    # Additional style choices
-    st.sidebar.header("Visual Options")
+    # Marker Size selector
+    size_options = ["Uniform"] + dsp_cols
+    size_col = st.sidebar.selectbox(
+        "Marker Size Variable (Visual Magnitude):", size_options, index=0
+    )
+
+    # Additional dashboard plot configurations
+    st.sidebar.header("Visualization Styles")
     colorscale_choice = st.sidebar.selectbox(
-        "Colormap Style Schema:", ["Viridis", "Cividis", "Plasma", "Inferno"]
+        "Continuous Colorscale Style:", ["Cividis", "Viridis", "Plasma", "Inferno"]
     )
 
-    show_global_surface = st.sidebar.checkbox(
-        "Plot Global Surface Mesh (Opacity: 0.45)", value=True
+    show_surfaces = st.sidebar.checkbox(
+        "Plot Empirical Bivariate Surfaces (Opacity: 0.4)", value=True
     )
 
-    # 3. Unified Global Plotly Graph Construction
+    # Multi-layered interactive Plotly canvas creation
     fig = go.Figure()
 
-    # Calculate global range bounds for colorbar mapping
+    # Partition by cluster ID
+    unique_clusters = sorted(filtered_df["cluster"].unique())
+
+    # Map markers to each cluster ID to replicate visualizer layout
+    cluster_markers = {0: "circle", 1: "square", 4: "diamond", 8: "cross", 9: "x"}
+
+    # Calculate global ranges for color bar mapping normalization
     c_min = filtered_df[color_col].min()
     c_max = filtered_df[color_col].max()
     if c_min == c_max:
         c_min -= 0.1
         c_max += 0.1
 
-    # Plot continuous macroscopic vulnerability surface mesh if enabled
-    if show_global_surface:
-        gx, gy, gz = interpolate_global_surface(
-            filtered_df, x_axis_col, y_axis_col, z_axis_col, grid_size=60
-        )
+    # Keep track of which scatter plot owns the single colorbar
+    colorbar_assigned = False
 
-        if gx is not None and gz is not None:
-            fig.add_trace(
-                go.Surface(
-                    x=gx,
-                    y=gy,
-                    z=gz,
-                    opacity=0.45,
+    # 1. Overlay Surface Mesh interpolation if enabled
+    if show_surfaces:
+        dense_surface_clusters = [1, 4]
+        for cid in dense_surface_clusters:
+            if cid in unique_clusters:
+                cluster_df = filtered_df[filtered_df["cluster"] == cid]
+                gx, gy, gz = interpolate_surface(
+                    cluster_df, x_axis_col, y_axis_col, z_axis_col, grid_size=50
+                )
+
+                if gx is not None and gz is not None:
+                    fig.add_trace(
+                        go.Surface(
+                            x=gx,
+                            y=gy,
+                            z=gz,
+                            opacity=0.4,
+                            colorscale=colorscale_choice,
+                            cmin=c_min,
+                            cmax=c_max,
+                            showscale=False,
+                            name=f"Cluster {cid} Surface",
+                            hoverinfo="skip",
+                        )
+                    )
+
+    # 2. Add scatter layers for each unique cluster population
+    for cid in unique_clusters:
+        cluster_df = filtered_df[filtered_df["cluster"] == cid]
+        marker_symbol = cluster_markers.get(cid, "circle")
+
+        # Map sizes dynamically
+        m_sizes = compute_marker_sizes(cluster_df, size_col)
+
+        # Custom hover parameters mapping
+        hover_text = []
+        for _, row in cluster_df.iterrows():
+            hover_text.append(
+                f"Cluster: {row['cluster']}<br>"
+                f"{x_axis_col}: {row[x_axis_col]:.4f}<br>"
+                f"{y_axis_col}: {row[y_axis_col]:.4f}<br>"
+                f"{z_axis_col}: {row[z_axis_col]:.4f}<br>"
+                f"Color ({color_col}): {row[color_col]:.4f}"
+            )
+
+        show_scale = False
+        if not colorbar_assigned:
+            show_scale = True
+            colorbar_assigned = True
+
+        fig.add_trace(
+            go.Scatter3d(
+                x=cluster_df[x_axis_col],
+                y=cluster_df[y_axis_col],
+                z=cluster_df[z_axis_col],
+                mode="markers",
+                name=f"Cluster {cid} (Scatter)",
+                text=hover_text,
+                hoverinfo="text",
+                marker=dict(
+                    size=m_sizes,
+                    color=cluster_df[color_col],
                     colorscale=colorscale_choice,
                     cmin=c_min,
                     cmax=c_max,
-                    showscale=False,
-                    name="Global Vulnerability Surface",
-                    hoverinfo="skip",
-                )
-            )
-
-    # Plot unified single global Scatter3d trace
-    # Marker symbols are uniform (circles) with colors tied reactively to color_col
-    hover_text = []
-    for _, row in filtered_df.iterrows():
-        # Include cluster info as supplementary metadata, but do not split trace
-        cluster_info = (
-            f"Cluster ID: {int(row['cluster'])}"
-            if "cluster" in filtered_df.columns
-            else "N/A"
-        )
-        hover_text.append(
-            f"Sample Info:<br>"
-            f"Acoustic {cluster_info}<br>"
-            f"{x_axis_col}: {row[x_axis_col]:.4f}<br>"
-            f"{y_axis_col}: {row[y_axis_col]:.4f}<br>"
-            f"{z_axis_col}: {row[z_axis_col]:.4f}<br>"
-            f"Color ({color_col}): {row[color_col]:.4f}"
-        )
-
-    fig.add_trace(
-        go.Scatter3d(
-            x=filtered_df[x_axis_col],
-            y=filtered_df[y_axis_col],
-            z=filtered_df[z_axis_col],
-            mode="markers",
-            name="Successful Deception Vectors",
-            text=hover_text,
-            hoverinfo="text",
-            marker=dict(
-                size=6,
-                color=filtered_df[color_col],
-                colorscale=colorscale_choice,
-                cmin=c_min,
-                cmax=c_max,
-                showscale=True,
-                colorbar=dict(
-                    title=dict(
-                        text=color_col,
-                        font=dict(size=12, family="serif"),
+                    showscale=show_scale,
+                    colorbar=(
+                        dict(
+                            title=dict(
+                                text=color_col,
+                                font=dict(size=12, family="serif"),
+                            ),
+                            tickfont=dict(size=10, family="serif"),
+                            x=1.15,
+                        )
+                        if show_scale
+                        else None
                     ),
-                    tickfont=dict(size=10, family="serif"),
-                    x=1.15,
+                    symbol=marker_symbol,
+                    line=dict(color="rgba(30, 30, 30, 0.8)", width=1),
                 ),
-                symbol="circle",
-                line=dict(color="rgba(30, 30, 30, 0.8)", width=1),
-            ),
+            )
         )
-    )
 
-    # Determine dynamic coordinate intervals
+    # Determine spatial ranges dynamically to fit varying features
     x_range = [filtered_df[x_axis_col].min(), filtered_df[x_axis_col].max()]
     y_range = [filtered_df[y_axis_col].min(), filtered_df[y_axis_col].max()]
     z_range = [filtered_df[z_axis_col].min(), filtered_df[z_axis_col].max()]
 
-    # Standard axis paddings
+    # Apply padding to ranges to prevent marker edge clipping
     for r in [x_range, y_range, z_range]:
         if r[1] != r[0]:
             diff = r[1] - r[0]
@@ -438,7 +525,7 @@ def main():
             r[0] -= 0.5
             r[1] += 0.5
 
-    # Structure plot layout conforming to academic formatting
+    # Clean layout parameters mapping matching academic guidelines
     fig.update_layout(
         margin=dict(l=40, r=40, b=40, t=60),
         legend=dict(
@@ -485,18 +572,37 @@ def main():
         ),
     )
 
-    # Render web graph
-    st.plotly_chart(fig, use_container_width=True)
+    # Render interactive figure widget on Streamlit page
+    st.plotly_chart(fig, width="stretch")
 
-    # 4. Informational Table Panel
-    st.markdown("### Workspace Aggregate Metrics Reference Table")
+    # 3. Informational Cluster Summary Panel
+    st.markdown("### Acoustic Cluster Aggregate Performance")
     if analysis_df is not None:
         st.write("Summary statistics loaded directly from the paired run execution:")
+        # Render clean data table matching serif styling
         st.dataframe(analysis_df, use_container_width=True)
     else:
         st.warning(
             "Paired analysis_clusters_*.csv not found. Re-run training loops to create."
         )
+
+    # Dynamic Media Synchronization Layer
+    st.markdown("### Convergence Progress Visualization")
+    conv_image = find_convergence_image(st.session_state.get("active_session_id"))
+    if conv_image:
+        st.image(
+            conv_image,
+            width="stretch",
+        )
+        st.markdown(
+            "<div style='text-align: center; font-size: 0.85em; color: #666;'>"
+            "Session Convergence Progress Graph<br>"
+            "<i>(Automatically Sourced from 'outputs/')</i>"
+            "</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        st.caption("Convergence graphic asset not populated for this session.")
 
 
 if __name__ == "__main__":
