@@ -1,3 +1,7 @@
+"""
+Usage:
+    python -m scripts.merge_histories history_part1.csv history_part2.csv --output merged_history.csv
+"""
 import pandas as pd
 import argparse
 import os
